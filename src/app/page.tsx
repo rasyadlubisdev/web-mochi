@@ -55,6 +55,7 @@ export default function Home() {
   const [selected, setSelected] = useState<{ item: GalleryItemRaw; score?: number } | null>(null);
   const [about, setAbout] = useState(false);
   const [modelStatus, setModelStatus] = useState<ModelStatus>("idle");
+  const [visibleCount, setVisibleCount] = useState(60); // browse pagination
 
   // builder state
   const [voxels, setVoxels] = useState<VoxelMap>({});
@@ -346,7 +347,7 @@ export default function Home() {
         <section className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {!items
             ? Array.from({ length: 10 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-xl skeleton" />)
-            : displayed.map(({ item, score, rank }) => (
+            : (results ? displayed : displayed.slice(0, visibleCount)).map(({ item, score, rank }) => (
                 <BuildCard
                   key={item.id}
                   item={item}
@@ -356,6 +357,18 @@ export default function Home() {
                 />
               ))}
         </section>
+
+        {/* browse pagination */}
+        {items && !results && visibleCount < displayed.length && (
+          <div className="mt-6 flex justify-center">
+            <button
+              onClick={() => setVisibleCount((v) => v + 60)}
+              className="text-sm px-5 py-2.5 rounded-xl border border-[var(--color-border)] text-white/70 hover:text-white hover:border-[var(--color-voxel)]/50"
+            >
+              Load more ({displayed.length - visibleCount} left)
+            </button>
+          </div>
+        )}
       </main>
 
       <footer className="mx-auto max-w-7xl px-4 py-8 text-center text-xs text-white/30">

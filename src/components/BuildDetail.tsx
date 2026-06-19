@@ -1,15 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import dynamic from "next/dynamic";
 import type { GalleryItemRaw } from "@/lib/types";
-import { decodeGrid } from "@/lib/voxel";
 import { compactNum, scorePct } from "@/lib/format";
-
-const VoxelViewer = dynamic(() => import("./VoxelViewer").then((m) => m.VoxelViewer), {
-  ssr: false,
-  loading: () => <div className="h-full w-full skeleton rounded-lg" />,
-});
 
 const PrismarineViewer = dynamic(() => import("./PrismarineViewer").then((m) => m.PrismarineViewer), {
   ssr: false,
@@ -25,16 +19,6 @@ export function BuildDetail({
   score?: number;
   onClose: () => void;
 }) {
-  const [grid, setGrid] = useState<Uint8Array | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    decodeGrid(item.voxels).then((g) => alive && setGrid(g));
-    return () => {
-      alive = false;
-    };
-  }, [item.voxels]);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -55,7 +39,7 @@ export function BuildDetail({
           <PrismarineViewer
             id={item.id}
             className="h-full w-full"
-            fallback={grid ? <VoxelViewer grid={grid} className="h-full w-full" /> : undefined}
+            fallback={<div className="grid h-full w-full place-items-center text-sm text-white/40">preview unavailable</div>}
           />
           <span className="absolute bottom-3 left-3 text-[11px] text-white/40 mono">
             drag to orbit · textured · {item.dims.join("×")} blocks

@@ -2,14 +2,17 @@
 
 export const GRID = 32;
 
-/** A schematic as stored in public/data/gallery.json (voxels base64-gzipped). */
+/**
+ * A build's metadata as stored in public/data/gallery.json. This is a
+ * lightweight index for the whole dataset — voxels are NOT inlined; they're
+ * fetched per build from public/data/raw/<id>.bin and rendered client-side.
+ */
 export interface GalleryItemRaw {
   id: string;
   title: string;
   category: string;
   description: string;
   tags: string[];
-  text: string;
   user: string;
   url: string | null;
   img: string | null;
@@ -19,13 +22,13 @@ export interface GalleryItemRaw {
   year: number | null;
   dims: [number, number, number]; // original cropped extents (pre-resize)
   fill: number;
-  voxels: string; // base64( gzip( uint8[32^3] ) )
 }
 
 export interface GalleryFile {
   meta: {
     grid: number;
     count: number;
+    featDim: number;
     maxBlockTypes: number;
     source: string;
     note: string;
@@ -51,9 +54,10 @@ export interface BuildSummary {
   fill: number;
 }
 
-export interface SearchResult extends BuildSummary {
+/** Search APIs return only id + score; the client maps ids back to gallery items. */
+export interface SearchResult {
+  id: string;
   score: number; // cosine similarity in [-1, 1]
-  voxels: string; // base64-gzipped grid so the detail view can render it
 }
 
 export type SearchMode = "text" | "voxel";
