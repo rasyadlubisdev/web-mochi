@@ -38,7 +38,8 @@ export function BuildCard({
     >
       <div className="relative aspect-[4/3] bg-[var(--color-panel-2)] overflow-hidden">
         <VoxelThumb
-          voxels={item.voxels}
+          id={item.id}
+          alt={item.title}
           className="absolute inset-0 h-full w-full group-hover:scale-105 transition-transform duration-300"
         />
 
