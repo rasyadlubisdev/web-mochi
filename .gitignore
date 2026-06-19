@@ -7,3 +7,5 @@
 .env*.local
 /.cache
 .transformers-cache/
+/.claude
+/.transformers-cache
