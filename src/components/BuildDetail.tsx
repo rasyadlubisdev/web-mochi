@@ -11,6 +11,11 @@ const VoxelViewer = dynamic(() => import("./VoxelViewer").then((m) => m.VoxelVie
   loading: () => <div className="h-full w-full skeleton rounded-lg" />,
 });
 
+const PrismarineViewer = dynamic(() => import("./PrismarineViewer").then((m) => m.PrismarineViewer), {
+  ssr: false,
+  loading: () => <div className="h-full w-full skeleton rounded-lg" />,
+});
+
 export function BuildDetail({
   item,
   score,
@@ -47,13 +52,13 @@ export function BuildDetail({
       >
         {/* 3D preview */}
         <div className="relative md:w-1/2 aspect-square md:aspect-auto md:h-[520px] bg-[#0d0d16]">
-          {grid ? (
-            <VoxelViewer grid={grid} className="h-full w-full" />
-          ) : (
-            <div className="h-full w-full skeleton" />
-          )}
+          <PrismarineViewer
+            id={item.id}
+            className="h-full w-full"
+            fallback={grid ? <VoxelViewer grid={grid} className="h-full w-full" /> : undefined}
+          />
           <span className="absolute bottom-3 left-3 text-[11px] text-white/40 mono">
-            drag to orbit · 32³ voxels · {item.dims.join("×")} original
+            drag to orbit · textured · {item.dims.join("×")} blocks
           </span>
         </div>
 
