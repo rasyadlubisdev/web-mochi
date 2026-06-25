@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { BuildSummary, GalleryFile, GalleryItemRaw } from "./types";
 import { TEXT_DIM } from "./text-embed";
+import { buildBm25, type Bm25Index } from "./lexical";
 
 export interface IndexedBuild {
   raw: GalleryItemRaw;
@@ -21,7 +22,8 @@ interface GalleryIndex {
   builds: IndexedBuild[];
   meta: GalleryFile["meta"];
   textEmb: Float32Array[] | null; // aligned with builds; null until loaded
-  textEmbReady: Promise<void> | null;
+  textEmbReady: Promise<Float32Array[] | null> | null;
+  lexical: Bm25Index | null; // BM25 over build texts; null until loaded
 }
 
 const GLOBAL_KEY = "__mc_gallery_index__";
@@ -51,7 +53,7 @@ function buildIndex(): GalleryIndex {
     features: features[i],
   }));
 
-  return { builds, meta: data.meta, textEmb: null, textEmbReady: null };
+  return { builds, meta: data.meta, textEmb: null, textEmbReady: null, lexical: null };
 }
 
 /** Get (or create) the singleton gallery index. */
@@ -63,16 +65,33 @@ export async function getGallery(): Promise<GalleryIndex> {
 
 /**
  * Load the precomputed text embeddings (text-emb.bin). Runs at most once;
- * concurrent callers await the same promise.
+ * concurrent callers await the same promise. Returns null if the file is
+ * missing (search then degrades to lexical-only).
  */
-export async function ensureTextEmbeddings(): Promise<Float32Array[]> {
+export async function ensureTextEmbeddings(): Promise<Float32Array[] | null> {
   const index = await getGallery();
   if (index.textEmb) return index.textEmb;
   if (!index.textEmbReady) {
     index.textEmbReady = (async () => {
-      index.textEmb = readMatrix(dataPath("text-emb.bin"), index.builds.length, TEXT_DIM);
+      const p = dataPath("text-emb.bin");
+      if (!fs.existsSync(p)) return null;
+      index.textEmb = readMatrix(p, index.builds.length, TEXT_DIM);
+      return index.textEmb;
     })();
   }
-  await index.textEmbReady;
-  return index.textEmb!;
+  return index.textEmbReady;
+}
+
+/**
+ * Build (once) the BM25 lexical index from the corpus texts (_texts.json,
+ * aligned with item order). Returns null if the texts file is absent.
+ */
+export async function ensureLexical(): Promise<Bm25Index | null> {
+  const index = await getGallery();
+  if (index.lexical) return index.lexical;
+  const p = dataPath("_texts.json");
+  if (!fs.existsSync(p)) return null;
+  const texts = JSON.parse(fs.readFileSync(p, "utf8")) as string[];
+  index.lexical = buildBm25(texts);
+  return index.lexical;
 }

@@ -23,7 +23,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
           <Section
             title="🔍 Text → Build"
             color="var(--color-text)"
-            body="Your free-text query is embedded with all-MiniLM-L6-v2 (the same backbone the project uses) and ranked against every build's text embedding (title + subtitle + description + tags) by cosine similarity. This is genuine semantic search — 'cozy medieval house' matches on meaning, not keywords."
+            body="Hybrid retrieval over the full dataset: a dense semantic score (your query embedded with all-MiniLM-L6-v2, cosine similarity to each build's title+subtitle+description+tags embedding) is fused with a lexical BM25 score. So 'cozy medieval house' matches on meaning, while exact terms like 'redstone' or 'AT-AT' still rank precisely."
           />
           <Section
             title="🧱 Build → Build"

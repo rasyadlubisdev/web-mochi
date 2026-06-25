@@ -64,7 +64,7 @@ export function BuildDetail({
 
           {score != null && (
             <div className="mt-4 rounded-lg border border-[var(--color-voxel)]/30 bg-[var(--color-voxel)]/5 px-3 py-2">
-              <span className="text-xs text-white/60">cosine similarity to query</span>
+              <span className="text-xs text-white/60">relevance to query</span>
               <div className="text-lg font-semibold mono text-[var(--color-voxel)]">{scorePct(score)}</div>
             </div>
           )}

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGallery } from "@/lib/gallery";
 import { base64ToBytes, bboxCropResize, voxelFeatures, VOXELS } from "@/lib/voxel";
-import { dot } from "@/lib/similarity";
+import { topK } from "@/lib/similarity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,15 +46,13 @@ export async function POST(req: NextRequest) {
   const queryFeat = voxelFeatures(grid, dims);
 
   const index = await getGallery();
-  const scored = index.builds.map((b) => ({
-    id: b.raw.id,
-    score: dot(queryFeat, b.features),
-  }));
-  scored.sort((a, b) => b.score - a.score);
+  // features are L2-normalised → topK uses dot == cosine and returns the top-k.
+  const ranked = topK(queryFeat, index.builds.map((b) => b.features), k);
+  const results = ranked.map((r) => ({ id: index.builds[r.index].raw.id, score: r.score }));
 
   return NextResponse.json({
     mode: "voxel",
-    results: scored.slice(0, k),
+    results,
     stats: { nonAir, dims },
     tookMs: Math.round(performance.now() - t0),
   });
