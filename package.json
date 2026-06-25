@@ -11,7 +11,9 @@
     "export-gallery": "python scripts/export_gallery.py --n 240",
     "build-voxel-assets": "node scripts/build_voxel_assets.mjs",
     "build-text-embeddings": "node scripts/build_text_embeddings.mjs",
-    "build-data": "npm run build-voxel-assets && npm run build-text-embeddings"
+    "build-data": "npm run build-voxel-assets && npm run build-text-embeddings",
+    "model-precompute": "python model_server/precompute.py",
+    "model-server": "python model_server/serve.py"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.3.3",

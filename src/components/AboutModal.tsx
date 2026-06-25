@@ -13,37 +13,36 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <p className="mt-4 text-sm text-white/70 leading-relaxed">
-          This is a demo of <strong className="text-white">cross-modal retrieval</strong> between natural language and
-          3D Minecraft voxel schematics — the final project for the <em>Retrieval Information</em> course. The research
-          model learns a shared embedding space with a CLIP-style dual encoder (a 3D-CNN <span className="text-[var(--color-voxel)]">VoxelEncoder</span> and
-          a frozen <span className="text-[var(--color-text)]">all-MiniLM-L6-v2 TextEncoder</span>), trained with symmetric InfoNCE.
+          This is a demo of <strong className="text-white">cross-modal retrieval</strong> between text, images and
+          3D Minecraft voxel schematics — the final project for the <em>Retrieval Information</em> course. It runs the
+          actual <strong className="text-white">trained tri-modal model</strong>: a CLIP ViT-B/16
+          <span className="text-[var(--color-text)]"> text</span> + <span className="text-[var(--color-text)]">image</span> encoder
+          and a <span className="text-[var(--color-voxel)]">PointBERT</span> voxel encoder projected into one shared 256-d space,
+          trained with symmetric InfoNCE. Every build's voxel embedding is precomputed; your query is embedded live and ranked
+          by cosine similarity.
         </p>
 
         <div className="mt-5 space-y-4 text-sm">
           <Section
             title="🔍 Text → Build"
             color="var(--color-text)"
-            body="Hybrid retrieval over the full dataset: a dense semantic score (your query embedded with all-MiniLM-L6-v2, cosine similarity to each build's title+subtitle+description+tags embedding) is fused with a lexical BM25 score. So 'cozy medieval house' matches on meaning, while exact terms like 'redstone' or 'AT-AT' still rank precisely."
+            body="Your free-text query is embedded by the model's CLIP text encoder and ranked against every build's voxel embedding in the shared space (text→voxel — the model's main retrieval task)."
           />
           <Section
-            title="🧱 Build → Build"
-            color="var(--color-voxel)"
-            body="Your voxel structure is run through the same preprocessing as training (bounding-box crop + nearest-neighbour resize to 32³), then turned into a structural feature descriptor (block palette, fill, aspect ratio, vertical/horizontal mass profiles, symmetry). Cosine similarity over these descriptors finds structurally similar community builds."
+            title="🖼️ Image → Build"
+            color="var(--color-text)"
+            body="Upload a photo or render; the model's CLIP image encoder embeds it and ranks builds by similarity to their voxel embeddings (image→voxel — the model's strongest direction, recall@1 ≈ 0.32)."
           />
-        </div>
-
-        <div className="mt-5 rounded-lg border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-4 text-sm text-white/70">
-          <div className="font-medium text-[var(--color-accent)] mb-1">A note on fidelity</div>
-          No trained checkpoint ships with this repo, so the demo runs the <strong className="text-white">real MiniLM text
-          backbone</strong> for the text side and a <strong className="text-white">handcrafted structural descriptor</strong> as
-          a stand-in for the trained VoxelEncoder. The UX, preprocessing, and retrieval flow mirror the real system; swapping
-          in a trained <span className="mono">DualEncoder</span> checkpoint (via the documented inference adapter) upgrades both
-          sides to the learned 256-d aligned space. See the project README.
+          <Section
+            title="🧱 Schematic → Build"
+            color="var(--color-voxel)"
+            body="Upload a .schem/.schematic; it's voxelised and embedded by the PointBERT voxel encoder, then matched against the gallery's voxel embeddings (voxel→voxel)."
+          />
         </div>
 
         <div className="mt-5 text-xs text-white/40">
-          Dataset: 8,328 schematics scraped from Planet Minecraft (rom1504/minecraft-schematics-dataset). This demo indexes a
-          curated, category-balanced subset.
+          Dataset: 8,328 Minecraft schematics (minecraft-schematics-mvm). Embeddings are produced by the user's trained
+          checkpoint served from a local PyTorch inference sidecar.
         </div>
       </div>
     </div>

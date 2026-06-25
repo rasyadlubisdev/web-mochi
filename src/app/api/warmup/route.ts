@@ -1,25 +1,17 @@
-// Warm the text-embedding model + gallery embeddings so the first user query is fast.
+// Health check for the model sidecar so the UI can show "model ready".
 
 import { NextResponse } from "next/server";
-import { ensureTextEmbeddings, getGallery } from "@/lib/gallery";
+import { MODEL_SERVER, sidecarDownResponse } from "@/lib/modelServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const t0 = performance.now();
   try {
-    const index = await getGallery();
-    await ensureTextEmbeddings();
-    return NextResponse.json({
-      ready: true,
-      builds: index.builds.length,
-      tookMs: Math.round(performance.now() - t0),
-    });
-  } catch (err) {
-    return NextResponse.json(
-      { ready: false, detail: err instanceof Error ? err.message : String(err) },
-      { status: 503 },
-    );
+    const res = await fetch(`${MODEL_SERVER}/health`, { cache: "no-store" });
+    const data = await res.json();
+    return NextResponse.json({ ready: !!data.ok, ...data }, { status: res.ok ? 200 : 503 });
+  } catch (e) {
+    return NextResponse.json(sidecarDownResponse(e instanceof Error ? e.message : String(e)), { status: 503 });
   }
 }

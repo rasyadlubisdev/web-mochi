@@ -1,47 +1,38 @@
-// Schematic → Build retrieval.
+// Schematic → Build retrieval via the trained tri-modal model.
 //
-// Accepts an uploaded .schem / .schematic file, parses it (prismarine-schematic),
-// voxelises it into a 32^3 grid of 1.16.4 block-state IDs (uniform-scaled to keep
-// true proportions), then:
-//   • returns the raw grid so the client can render a textured 3D preview, and
-//   • remaps it into the gallery's compact block space, extracts the same
-//     structural descriptor as the dataset, and ranks builds by cosine similarity.
+// Parses an uploaded .schem/.schematic, voxelises it into a 32^3 grid, and:
+//   • returns the real-block-state grid so the client renders a 3D preview, and
+//   • maps blocks into the model's name2id vocab and asks the Python sidecar to
+//     embed it with the PointBERT voxel encoder + rank the gallery (voxel→voxel).
 
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { Schematic } from "prismarine-schematic";
-import mcDataLoader from "minecraft-data";
 import { Vec3 } from "vec3";
-import { getGallery } from "@/lib/gallery";
-import { bboxCropResize, voxelFeatures, idx, VOXELS } from "@/lib/voxel";
-import { topK } from "@/lib/similarity";
 import { GRID } from "@/lib/types";
+import { MODEL_SERVER, sidecarDownResponse } from "@/lib/modelServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const VERSION = "1.16.4";
-const MAX_FILE = 25 * 1024 * 1024; // 25 MB
-const MAX_VOLUME = 48_000_000; // reject absurdly large schematics (parsed fully in memory)
+const VOXELS = GRID * GRID * GRID;
+const MAX_FILE = 25 * 1024 * 1024;
+const MAX_VOLUME = 48_000_000;
 
-const mc = mcDataLoader(VERSION);
+const idx = (x: number, y: number, z: number) => x * GRID * GRID + y * GRID + z;
 
-let mappingCache: Record<string, number> | null = null;
-function getMapping(): Record<string, number> {
-  if (mappingCache) return mappingCache;
-  const p = path.join(process.cwd(), "public", "data", "block_mapping.json");
-  const m = JSON.parse(fs.readFileSync(p, "utf8")) as Record<string, number>;
-  mappingCache = m;
-  return m;
+let nameToStateId: Record<string, number> | null = null;
+let name2id: Record<string, number> | null = null;
+function loadMaps() {
+  if (!nameToStateId) nameToStateId = JSON.parse(fs.readFileSync(path.join(process.cwd(), "public", "data", "name2stateid.json"), "utf8"));
+  if (!name2id) name2id = JSON.parse(fs.readFileSync(path.join(process.cwd(), "public", "data", "name2id.json"), "utf8"));
+  return { nameToStateId: nameToStateId!, name2id: name2id! };
 }
 
-function nameToStateId(name: string): number {
-  const short = name.includes(":") ? name.split(":")[1] : name;
-  const b = mc.blocksByName[short];
-  return b && typeof b.defaultState === "number" ? b.defaultState : 1; // unknown → stone, so it stays visible
-}
+const isAir = (n?: string) => !n || n === "air" || n === "cave_air" || n === "void_air";
 
 export async function POST(req: NextRequest) {
   const t0 = performance.now();
@@ -51,12 +42,8 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const file = form.get("file");
-    if (!file || typeof file === "string") {
-      return NextResponse.json({ error: "No file uploaded (expected form field 'file')" }, { status: 400 });
-    }
-    if (file.size > MAX_FILE) {
-      return NextResponse.json({ error: "File too large (max 25 MB)" }, { status: 400 });
-    }
+    if (!file || typeof file === "string") return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    if (file.size > MAX_FILE) return NextResponse.json({ error: "File too large (max 25 MB)" }, { status: 400 });
     filename = file.name || filename;
     buffer = Buffer.from(await file.arrayBuffer());
   } catch {
@@ -73,39 +60,35 @@ export async function POST(req: NextRequest) {
     try {
       schem = await Schematic.read(buffer);
     } catch {
-      schem = await Schematic.read(buffer, VERSION); // legacy .schematic needs an explicit version
+      schem = await Schematic.read(buffer, VERSION);
     }
   } catch (err) {
     return NextResponse.json(
-      {
-        error: "Could not parse schematic",
-        detail: err instanceof Error ? err.message : String(err),
-        hint: "Supported: WorldEdit .schem (Sponge) and legacy MCEdit .schematic.",
-      },
+      { error: "Could not parse schematic", detail: err instanceof Error ? err.message : String(err),
+        hint: "Supported: WorldEdit .schem (Sponge) and legacy MCEdit .schematic." },
       { status: 422 },
     );
   }
 
   const start = schem.start();
   const end = schem.end();
-  const W = end.x - start.x + 1;
-  const H = end.y - start.y + 1;
-  const L = end.z - start.z + 1;
+  const W = end.x - start.x + 1, H = end.y - start.y + 1, L = end.z - start.z + 1;
   if (W <= 0 || H <= 0 || L <= 0 || W * H * L > MAX_VOLUME) {
     return NextResponse.json({ error: "Schematic dimensions out of range" }, { status: 422 });
   }
 
-  // uniform downscale so the longest axis fills the 32-grid (preserves proportions), centred
+  const { nameToStateId: n2s, name2id: n2i } = loadMaps();
+
+  // uniform downscale → longest axis fills the 32-grid (preserves proportions), centred
   const maxD = Math.max(W, H, L);
   const s = GRID / maxD;
   const nw = Math.max(1, Math.min(GRID, Math.round(W * s)));
   const nh = Math.max(1, Math.min(GRID, Math.round(H * s)));
   const nl = Math.max(1, Math.min(GRID, Math.round(L * s)));
-  const ox = (GRID - nw) >> 1;
-  const oy = (GRID - nh) >> 1;
-  const oz = (GRID - nl) >> 1;
+  const ox = (GRID - nw) >> 1, oy = (GRID - nh) >> 1, oz = (GRID - nl) >> 1;
 
-  const raw = new Uint16Array(VOXELS);
+  const raw = new Uint16Array(VOXELS);   // 1.16.4 state ids (preview)
+  const vidx = new Uint16Array(VOXELS);  // model name2id indices (search)
   let nonAir = 0;
   for (let tx = 0; tx < nw; tx++) {
     const sx = Math.min(W - 1, Math.floor((tx * W) / nw));
@@ -113,39 +96,38 @@ export async function POST(req: NextRequest) {
       const sy = Math.min(H - 1, Math.floor((ty * H) / nh));
       for (let tz = 0; tz < nl; tz++) {
         const sz = Math.min(L - 1, Math.floor((tz * L) / nl));
-        const block = schem.getBlock(new Vec3(start.x + sx, start.y + sy, start.z + sz));
-        const name = block?.name;
-        if (!name || name === "air" || name === "cave_air" || name === "void_air") continue;
-        raw[idx(ox + tx, oy + ty, oz + tz)] = nameToStateId(name);
+        const name = schem.getBlock(new Vec3(start.x + sx, start.y + sy, start.z + sz))?.name;
+        if (isAir(name)) continue;
+        const key = `minecraft:${name}`;
+        const gi = idx(ox + tx, oy + ty, oz + tz);
+        raw[gi] = n2s[key] ?? n2s[name as string] ?? 1;
+        vidx[gi] = n2i[key] ?? 1; // unknown non-air → <rare>
         nonAir++;
       }
     }
   }
+  if (nonAir === 0) return NextResponse.json({ error: "Schematic appears to be empty (all air)" }, { status: 422 });
 
-  if (nonAir === 0) {
-    return NextResponse.json({ error: "Schematic appears to be empty (all air)" }, { status: 422 });
+  const voxels = zlib.gzipSync(Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength), { level: 9 }).toString("base64");
+  const gridB64 = zlib.gzipSync(Buffer.from(vidx.buffer, vidx.byteOffset, vidx.byteLength), { level: 9 }).toString("base64");
+
+  let results: unknown;
+  try {
+    const res = await fetch(`${MODEL_SERVER}/search/voxel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grid: gridB64, k: 48 }),
+    });
+    const data = await res.json();
+    if (!res.ok) return NextResponse.json(data, { status: res.status });
+    results = data.results;
+  } catch (e) {
+    return NextResponse.json(sidecarDownResponse(e instanceof Error ? e.message : String(e)), { status: 503 });
   }
-
-  // preview payload: gzip(uint16 LE) → base64 (matches public/data/raw/*.bin encoding)
-  const gz = zlib.gzipSync(Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength), { level: 9 });
-  const voxels = gz.toString("base64");
-
-  // search: remap to compact space → crop/resize → structural features → top-k
-  const mapping = getMapping();
-  const compact = new Uint8Array(VOXELS);
-  for (let i = 0; i < VOXELS; i++) {
-    const r = raw[i];
-    compact[i] = r === 0 ? 0 : mapping[r] ?? 1;
-  }
-  const { grid, dims } = bboxCropResize(compact);
-  const queryFeat = voxelFeatures(grid, dims);
-
-  const index = await getGallery();
-  const ranked = topK(queryFeat, index.builds.map((b) => b.features), 48);
-  const results = ranked.map((r) => ({ id: index.builds[r.index].raw.id, score: r.score }));
 
   return NextResponse.json({
     mode: "voxel",
+    method: "model:voxel->voxel",
     filename,
     voxels,
     results,

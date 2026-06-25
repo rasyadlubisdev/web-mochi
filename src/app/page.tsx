@@ -23,7 +23,7 @@ const EXAMPLES = [
   "modern glass house",
 ];
 
-type Mode = "text" | "build";
+type Mode = "text" | "image" | "build";
 type Scored = { id: string; score: number };
 type ModelStatus = "idle" | "loading" | "ready" | "error";
 
@@ -47,6 +47,11 @@ export default function Home() {
   const [uploadedGrid, setUploadedGrid] = useState<Uint16Array | null>(null);
   const [uploadName, setUploadName] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // image-search state
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageName, setImageName] = useState<string | null>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
 
   // --- load gallery + warm the text model ---
   useEffect(() => {
@@ -123,6 +128,31 @@ export default function Home() {
     }
   }, []);
 
+  // --- image upload search ---
+  const runImage = useCallback(async (file: File) => {
+    setMode("image");
+    setLoading(true);
+    setError(null);
+    setImageName(file.name);
+    setImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/search/image", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.hint ? `${data.error} — ${data.hint}` : data.error || "Search failed");
+      setResults(data.results);
+      setInfo(`${data.results.length} builds · ${file.name} · ${data.tookMs}ms`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Search failed");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const clearSearch = () => {
     setResults(null);
     setQuery("");
@@ -130,7 +160,13 @@ export default function Home() {
     setInfo(null);
     setUploadedGrid(null);
     setUploadName(null);
+    setImageUrl((p) => {
+      if (p) URL.revokeObjectURL(p);
+      return null;
+    });
+    setImageName(null);
     if (fileInput.current) fileInput.current.value = "";
+    if (imageInput.current) imageInput.current.value = "";
   };
 
   const scoreById = useMemo(() => {
@@ -177,6 +213,7 @@ export default function Home() {
         {/* mode tabs */}
         <div className="flex items-center gap-2 mb-5">
           <TabButton active={mode === "text"} onClick={() => setMode("text")} icon="🔍" label="Search by Text" />
+          <TabButton active={mode === "image"} onClick={() => setMode("image")} icon="🖼️" label="Search by Image" />
           <TabButton active={mode === "build"} onClick={() => setMode("build")} icon="🧱" label="Search by Building" />
         </div>
 
@@ -218,6 +255,70 @@ export default function Home() {
                   {ex}
                 </button>
               ))}
+            </div>
+          </section>
+        ) : mode === "image" ? (
+          <section className="grid lg:grid-cols-[1fr_280px] gap-4">
+            {/* query image preview */}
+            <div className="relative rounded-2xl border border-[var(--color-border)] bg-[#0d0d16] overflow-hidden h-[440px]">
+              {imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={imageUrl} alt={imageName ?? "query"} className="h-full w-full object-contain" />
+              ) : (
+                <label
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) runImage(f);
+                  }}
+                  className="h-full w-full grid place-items-center cursor-pointer text-center px-6 hover:bg-white/[0.02] transition-colors"
+                >
+                  <div>
+                    <div className="text-4xl mb-3">🖼️</div>
+                    <div className="text-sm text-white/80 font-medium">
+                      {loading ? "Searching…" : "Drop an image here, or click to browse"}
+                    </div>
+                    <div className="text-[11px] text-white/40 mt-1">jpg · png — a photo or render of a build</div>
+                  </div>
+                </label>
+              )}
+              {imageUrl && (
+                <div className="absolute bottom-3 left-3 text-[11px] text-white/45 mono pointer-events-none">your query image</div>
+              )}
+            </div>
+
+            {/* image controls */}
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-4 flex flex-col gap-4">
+              <div>
+                <div className="text-xs text-white/50 mb-2">Search by image</div>
+                <p className="text-[12px] text-white/55 leading-relaxed">
+                  Upload a photo or render of a build — the model embeds it with its image encoder and finds the most similar schematics.
+                </p>
+              </div>
+              <input
+                ref={imageInput}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) runImage(f);
+                }}
+              />
+              <button
+                onClick={() => imageInput.current?.click()}
+                disabled={loading}
+                className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40"
+              >
+                {loading ? "Searching…" : imageUrl ? "Try another image →" : "Choose image →"}
+              </button>
+              {imageName && (
+                <div className="text-[11px] text-white/55 mono break-all rounded-lg bg-[var(--color-panel-2)] px-3 py-2">{imageName}</div>
+              )}
+              <div className="mt-auto text-[11px] text-white/35 leading-relaxed">
+                Ranked via the trained model&apos;s image→voxel retrieval.
+              </div>
             </div>
           </section>
         ) : (
@@ -299,7 +400,11 @@ export default function Home() {
               <span className="text-red-400">⚠ {error}</span>
             ) : results ? (
               <span className="text-white/70">
-                {mode === "text" ? "Ranked by text similarity" : "Ranked by structural similarity"}
+                {mode === "text"
+                  ? "Ranked by the model — text → voxel"
+                  : mode === "image"
+                    ? "Ranked by the model — image → voxel"
+                    : "Ranked by the model — voxel → voxel"}
                 {info && <span className="text-white/40 mono ml-2">· {info}</span>}
               </span>
             ) : items ? (
