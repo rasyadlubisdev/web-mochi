@@ -91,6 +91,16 @@ export async function fetchVoxelGrid(id: string): Promise<Uint16Array> {
   return new Uint16Array(ab);
 }
 
+/** Decode a base64(gzip(uint16 LE)) raw grid (e.g. an uploaded schematic) → Uint16Array(32^3). */
+export async function decodeRawVoxels(b64: string): Promise<Uint16Array> {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const ds = new DecompressionStream("gzip");
+  const ab = await new Response(new Blob([bytes as BlobPart]).stream().pipeThrough(ds)).arrayBuffer();
+  return new Uint16Array(ab);
+}
+
 export interface MeshResult {
   textured: THREE.BufferGeometry | null;
   translucent: THREE.BufferGeometry | null;

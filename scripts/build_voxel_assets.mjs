@@ -44,6 +44,7 @@ const OUT_ATLAS_JSON = path.join(ROOT, "public/data/block_atlas.json");
 const OUT_GALLERY = path.join(ROOT, "public/data/gallery.json");
 const OUT_FEATURES = path.join(ROOT, "public/data/features.bin");
 const OUT_TEXTS = path.join(ROOT, "public/data/_texts.json");
+const OUT_MAPPING = path.join(ROOT, "public/data/block_mapping.json");
 
 const FACES = ["up", "down", "north", "south", "east", "west"];
 const TRANSLUCENT = /glass|^water$|^ice$|frosted_ice|slime_block|honey_block|nether_portal|barrier|^lava$/;
@@ -222,6 +223,8 @@ async function main() {
   const mapping = new Map([[0, 0]]);
   freq.forEach((r, i) => mapping.set(Number(r.b), i + 2)); // 0=air, 2.. = frequent, others -> 1
   console.log(`  mapped ${freq.length} frequent block states`);
+  // persist so the schematic-search route can remap uploads into this same space
+  fs.writeFileSync(OUT_MAPPING, JSON.stringify(Object.fromEntries(mapping)));
 
   const remap = (raw) => (raw === 0 ? 0 : mapping.get(raw) ?? 1);
 
@@ -307,7 +310,10 @@ async function main() {
   );
   fs.writeFileSync(OUT_TEXTS, JSON.stringify(texts));
 
-  // atlas
+  // atlas — also include every block's default state so uploaded schematics
+  // (which we render via default states) get textured, not just dataset states.
+  for (const b of mcData.blocksArray) if (typeof b.defaultState === "number") usedStates.add(b.defaultState);
+
   const blocks = {};
   let resolved = 0;
   for (const id of usedStates) {

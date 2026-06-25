@@ -14,14 +14,18 @@ import { buildVoxelMesh, fetchVoxelGrid, loadAtlas, loadAtlasTexture, type MeshR
  */
 export function PrismarineViewer({
   id,
+  grid,
   className,
   fallback,
 }: {
-  id: string;
+  /** render a gallery build by id (fetches its raw grid) … */
+  id?: string;
+  /** … or render a raw grid directly (e.g. an uploaded schematic). */
+  grid?: Uint16Array;
   className?: string;
   fallback?: ReactNode;
 }) {
-  const [data, setData] = useState<{ grid: Uint16Array; tex: THREE.Texture; mesh: MeshResult } | null>(null);
+  const [data, setData] = useState<{ tex: THREE.Texture; mesh: MeshResult } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -30,9 +34,11 @@ export function PrismarineViewer({
     setFailed(false);
     (async () => {
       try {
-        const [grid, atlas, tex] = await Promise.all([fetchVoxelGrid(id), loadAtlas(), loadAtlasTexture()]);
+        const [atlas, tex] = await Promise.all([loadAtlas(), loadAtlasTexture()]);
+        const g = grid ?? (id ? await fetchVoxelGrid(id) : null);
+        if (!g) throw new Error("no voxel source");
         if (!alive) return;
-        setData({ grid, tex, mesh: buildVoxelMesh(grid, atlas) });
+        setData({ tex, mesh: buildVoxelMesh(g, atlas) });
       } catch {
         if (alive) setFailed(true);
       }
@@ -40,7 +46,7 @@ export function PrismarineViewer({
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, grid]);
 
   if (failed) return <div className={className}>{fallback ?? null}</div>;
   if (!data) return <div className={`${className ?? ""} skeleton`} />;

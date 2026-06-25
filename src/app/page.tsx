@@ -1,17 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GalleryFile, GalleryItemRaw } from "@/lib/types";
-import { GRID } from "@/lib/types";
-import { bytesToBase64, idx, VOXELS } from "@/lib/voxel";
-import { blockColor } from "@/lib/blocks";
+import { decodeRawVoxels } from "@/lib/blockAtlas";
 import { BuildCard } from "@/components/BuildCard";
 import { BuildDetail } from "@/components/BuildDetail";
 import { AboutModal } from "@/components/AboutModal";
-import type { VoxelMap } from "@/components/VoxelBuilder";
 
-const VoxelBuilder = dynamic(() => import("@/components/VoxelBuilder").then((m) => m.VoxelBuilder), {
+const PrismarineViewer = dynamic(() => import("@/components/PrismarineViewer").then((m) => m.PrismarineViewer), {
   ssr: false,
   loading: () => <div className="h-full w-full skeleton rounded-xl" />,
 });
@@ -24,17 +21,6 @@ const EXAMPLES = [
   "pixel art character",
   "redstone computer",
   "modern glass house",
-];
-
-const PALETTE = [
-  { id: 2, name: "Stone" },
-  { id: 4, name: "Grass" },
-  { id: 14, name: "Wood" },
-  { id: 13, name: "Leaves" },
-  { id: 9, name: "Water" },
-  { id: 11, name: "Sand" },
-  { id: 10, name: "Brick" },
-  { id: 15, name: "Quartz" },
 ];
 
 type Mode = "text" | "build";
@@ -57,10 +43,10 @@ export default function Home() {
   const [modelStatus, setModelStatus] = useState<ModelStatus>("idle");
   const [visibleCount, setVisibleCount] = useState(60); // browse pagination
 
-  // builder state
-  const [voxels, setVoxels] = useState<VoxelMap>({});
-  const [block, setBlock] = useState(2);
-  const [erase, setErase] = useState(false);
+  // upload state (search by schematic file)
+  const [uploadedGrid, setUploadedGrid] = useState<Uint16Array | null>(null);
+  const [uploadName, setUploadName] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   // --- load gallery + warm the text model ---
   useEffect(() => {
@@ -110,42 +96,41 @@ export default function Home() {
     }
   }, []);
 
-  // --- voxel search ---
-  const runVoxel = useCallback(async () => {
-    const keys = Object.keys(voxels);
-    if (keys.length === 0) {
-      setError("Place some blocks first, then search.");
-      return;
-    }
+  // --- schematic upload search ---
+  const runSchematic = useCallback(async (file: File) => {
+    setMode("build");
     setLoading(true);
     setError(null);
-    const grid = new Uint8Array(VOXELS);
-    for (const k of keys) {
-      const [x, y, z] = k.split(",").map(Number);
-      if (x < GRID && y < GRID && z < GRID) grid[idx(x, y, z)] = voxels[k];
-    }
+    setUploadName(file.name);
+    setUploadedGrid(null);
     try {
-      const res = await fetch("/api/search/voxel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ grid: bytesToBase64(grid), k: 48 }),
-      });
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/schematic", { method: "POST", body: form });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Search failed");
+      if (!res.ok) throw new Error(data.hint ? `${data.error} — ${data.hint}` : data.error || "Upload failed");
+      setUploadedGrid(await decodeRawVoxels(data.voxels));
       setResults(data.results);
-      setInfo(`${data.results.length} builds · ${keys.length} blocks → ${data.stats.dims.join("×")} · ${data.tookMs}ms`);
+      setInfo(
+        `${data.results.length} builds · ${file.name} (${data.stats.dims.join("×")}, ${data.stats.blocks} blocks) · ${data.tookMs}ms`,
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Search failed");
+      setError(e instanceof Error ? e.message : "Upload failed");
+      setUploadedGrid(null);
+      setUploadName(null);
     } finally {
       setLoading(false);
     }
-  }, [voxels]);
+  }, []);
 
   const clearSearch = () => {
     setResults(null);
     setQuery("");
     setError(null);
     setInfo(null);
+    setUploadedGrid(null);
+    setUploadName(null);
+    if (fileInput.current) fileInput.current.value = "";
   };
 
   const scoreById = useMemo(() => {
@@ -237,82 +222,71 @@ export default function Home() {
           </section>
         ) : (
           <section className="grid lg:grid-cols-[1fr_280px] gap-4">
-            <div className="relative rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] overflow-hidden h-[440px]">
-              <VoxelBuilder voxels={voxels} setVoxels={setVoxels} selectedBlock={block} erase={erase} className="h-full w-full" />
-              <div className="absolute top-3 left-3 text-[11px] text-white/45 mono pointer-events-none">
-                click ground/faces to build · {Object.keys(voxels).length} blocks
-              </div>
+            {/* uploaded schematic preview */}
+            <div className="relative rounded-2xl border border-[var(--color-border)] bg-[#0d0d16] overflow-hidden h-[440px]">
+              {uploadedGrid ? (
+                <PrismarineViewer grid={uploadedGrid} className="h-full w-full" />
+              ) : (
+                <label
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) runSchematic(f);
+                  }}
+                  className="h-full w-full grid place-items-center cursor-pointer text-center px-6 hover:bg-white/[0.02] transition-colors"
+                >
+                  <div>
+                    <div className="text-4xl mb-3">📦</div>
+                    <div className="text-sm text-white/80 font-medium">
+                      {loading ? "Parsing schematic…" : "Drop a schematic here, or click to browse"}
+                    </div>
+                    <div className="text-[11px] text-white/40 mt-1">.schem (WorldEdit) · .schematic (MCEdit)</div>
+                  </div>
+                </label>
+              )}
+              {uploadedGrid && (
+                <div className="absolute bottom-3 left-3 text-[11px] text-white/45 mono pointer-events-none">
+                  drag to orbit · your uploaded schematic
+                </div>
+              )}
             </div>
 
-            {/* builder controls */}
+            {/* upload controls */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-4 flex flex-col gap-4">
               <div>
-                <div className="text-xs text-white/50 mb-2">Block palette</div>
-                <div className="grid grid-cols-4 gap-2">
-                  {PALETTE.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => {
-                        setBlock(p.id);
-                        setErase(false);
-                      }}
-                      title={p.name}
-                      className={`aspect-square rounded-lg border-2 transition ${
-                        block === p.id && !erase ? "border-white scale-105" : "border-transparent hover:border-white/40"
-                      }`}
-                      style={{ background: blockColor(p.id) }}
-                    />
-                  ))}
+                <div className="text-xs text-white/50 mb-2">Search by schematic</div>
+                <p className="text-[12px] text-white/55 leading-relaxed">
+                  Upload a Minecraft schematic — we voxelise it, show a 3D preview, and rank the most structurally similar community builds.
+                </p>
+              </div>
+
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".schem,.schematic"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) runSchematic(f);
+                }}
+              />
+              <button
+                onClick={() => fileInput.current?.click()}
+                disabled={loading}
+                className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40"
+              >
+                {loading ? "Parsing…" : uploadedGrid ? "Upload another →" : "Choose file →"}
+              </button>
+
+              {uploadName && (
+                <div className="text-[11px] text-white/55 mono break-all rounded-lg bg-[var(--color-panel-2)] px-3 py-2">
+                  {uploadName}
                 </div>
-              </div>
+              )}
 
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setErase(false)}
-                  className={`flex-1 text-xs py-2 rounded-lg border ${!erase ? "border-[var(--color-voxel)] text-[var(--color-voxel)]" : "border-[var(--color-border)] text-white/60"}`}
-                >
-                  🧱 Build
-                </button>
-                <button
-                  onClick={() => setErase(true)}
-                  className={`flex-1 text-xs py-2 rounded-lg border ${erase ? "border-red-400 text-red-400" : "border-[var(--color-border)] text-white/60"}`}
-                >
-                  🧽 Erase
-                </button>
-              </div>
-
-              <div>
-                <div className="text-xs text-white/50 mb-2">Quick presets</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["Tower", "House", "Pyramid", "Tree"] as const).map((name) => (
-                    <button
-                      key={name}
-                      onClick={async () => {
-                        const { PRESETS } = await import("@/components/VoxelBuilder");
-                        setVoxels(PRESETS[name]());
-                      }}
-                      className="text-xs py-2 rounded-lg bg-[var(--color-panel-2)] border border-[var(--color-border)] text-white/70 hover:border-white/30"
-                    >
-                      {name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-auto flex flex-col gap-2">
-                <button
-                  onClick={() => setVoxels({})}
-                  className="text-xs py-2 rounded-lg border border-[var(--color-border)] text-white/60 hover:text-white"
-                >
-                  Clear all
-                </button>
-                <button
-                  onClick={runVoxel}
-                  disabled={loading || Object.keys(voxels).length === 0}
-                  className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40"
-                >
-                  {loading ? "Searching…" : "Find similar builds →"}
-                </button>
+              <div className="mt-auto text-[11px] text-white/35 leading-relaxed">
+                Supported: WorldEdit <span className="mono">.schem</span> and legacy MCEdit <span className="mono">.schematic</span>. Large builds are scaled to a 32³ grid with proportions preserved.
               </div>
             </div>
           </section>
