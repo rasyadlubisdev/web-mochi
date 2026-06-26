@@ -415,25 +415,30 @@ async function main() {
   fs.writeFileSync(OUT_ATLAS_JSON, JSON.stringify({ version: VERSION, schema: 2, atlas: `/atlas/${VERSION}.png`, blocks }));
   fs.copyFileSync(path.join(PV_PUBLIC, "textures", `${VERSION}.png`), path.join(OUT_ATLAS_DIR, `${VERSION}.png`));
 
-  // state2block.json — stateId → "minecraft:name[prop=val,...]" for every state
-  // that appears in the dataset (+ every block's default state, for uploads). The
-  // client feeds these strings straight into the Cubane renderer, so it doesn't
-  // need prismarine-block / minecraft-data bundled in the browser.
+  // state2block.json — stateId → "minecraft:name[prop=val,...]" for EVERY block
+  // state in this version. The client feeds these strings straight into the Cubane
+  // renderer (so it needs no prismarine-block / minecraft-data in the browser), and
+  // because uploads resolve to real, orientation-carrying state ids (see the
+  // schematic route), the map must be comprehensive — not just dataset states — so
+  // any uploaded block (stairs facing east, logs on the x axis, …) renders.
   //
-  // The dataset uses 1.16.4 block names but the vendored resource pack is newer,
-  // so the two blocks renamed since 1.16.4 are mapped to their current ids (the
-  // only names from this dataset missing from the pack's blockstates).
+  // The dataset uses 1.16.4 block names but the vendored resource pack is newer, so
+  // the two blocks renamed since 1.16.4 are mapped to their current ids (the only
+  // names from this version missing from the pack's blockstates).
   const RENAME = { grass: "short_grass", grass_path: "dirt_path" };
   const state2block = {};
-  for (const id of usedStates) {
-    let b;
-    try { b = Block.fromStateId(id, 0); } catch { continue; }
-    if (!b || /(^|_)air$/.test(b.name)) continue;
-    const name = RENAME[b.name] ?? b.name;
-    const props = typeof b.getProperties === "function" ? b.getProperties() : b._properties || {};
-    const keys = Object.keys(props);
-    const suffix = keys.length ? `[${keys.map((k) => `${k}=${props[k]}`).join(",")}]` : "";
-    state2block[id] = `minecraft:${name}${suffix}`;
+  for (const b of mcData.blocksArray) {
+    if (b.minStateId == null || b.maxStateId == null) continue;
+    for (let id = b.minStateId; id <= b.maxStateId; id++) {
+      let blk;
+      try { blk = Block.fromStateId(id, 0); } catch { continue; }
+      if (!blk || /(^|_)air$/.test(blk.name)) continue;
+      const name = RENAME[blk.name] ?? blk.name;
+      const props = typeof blk.getProperties === "function" ? blk.getProperties() : blk._properties || {};
+      const keys = Object.keys(props);
+      const suffix = keys.length ? `[${keys.map((k) => `${k}=${props[k]}`).join(",")}]` : "";
+      state2block[id] = `minecraft:${name}${suffix}`;
+    }
   }
   fs.writeFileSync(OUT_STATE2BLOCK, JSON.stringify(state2block));
 

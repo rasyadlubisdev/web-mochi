@@ -119,6 +119,14 @@ function toIndexed(g: THREE.BufferGeometry): THREE.BufferGeometry {
   return g;
 }
 
+// Remove the `waterlogged` property token from a block string ("…[…]" form).
+function stripWaterlogged(bs: string): string {
+  const m = bs.match(/^(minecraft:[a-z0-9_]+)(?:\[(.*)\])?$/);
+  if (!m || !m[2]) return bs;
+  const props = m[2].split(",").filter((kv) => !kv.startsWith("waterlogged="));
+  return props.length ? `${m[1]}[${props.join(",")}]` : m[1];
+}
+
 function categoryOf(name: string, props: Record<string, string>): Category {
   if (name.includes("water") || name.includes("lava")) return "water";
   if (props.waterlogged === "true" || IMPLICIT_WATERLOGGED.has(name)) return "water";
@@ -196,16 +204,21 @@ export async function buildGridMesh(grid: Uint16Array): Promise<GridMesh> {
     if (palette.has(blockString)) return palette.get(blockString)!;
     let entry: PaletteEntry | null = null;
     try {
-      const m = blockString.match(/^minecraft:([a-z0-9_]+)(?:\[(.*)\])?$/);
-      const name = m ? m[1] : blockString.replace("minecraft:", "");
+      // Drop the `waterlogged` property: Cubane wraps waterlogged blocks in a full
+      // water cube, and the dataset marks many dry blocks (roof stairs, panes…)
+      // waterlogged, which would tint whole structures blue. Real `water` blocks
+      // are unaffected (they aren't waterlogged variants).
+      const clean = stripWaterlogged(blockString);
+      const m = clean.match(/^minecraft:([a-z0-9_]+)(?:\[(.*)\])?$/);
+      const name = m ? m[1] : clean.replace("minecraft:", "");
       const props: Record<string, string> = {};
       if (m && m[2]) for (const kv of m[2].split(",")) { const [k, v] = kv.split("="); props[k] = v; }
       const category = categoryOf(name, props);
 
-      const obj = await cubane.getBlockMesh(blockString, "plains", true);
+      const obj = await cubane.getBlockMesh(clean, "plains", true);
       const meshData = obj ? extractMeshData(obj) : [];
       if (meshData.length) {
-        const optData = await cubane.getBlockOptimizationData(blockString, "plains", true);
+        const optData = await cubane.getBlockOptimizationData(clean, "plains", true);
         entry = { meshData, occlusion: occlusionFlagsFrom(optData, category), category };
       }
     } catch {

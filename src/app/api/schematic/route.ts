@@ -11,6 +11,8 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { Schematic } from "prismarine-schematic";
 import { Vec3 } from "vec3";
+import mcDataLoader from "minecraft-data";
+import prismarineBlock from "prismarine-block";
 import { GRID } from "@/lib/types";
 import { MODEL_SERVER, sidecarDownResponse } from "@/lib/modelServer";
 
@@ -32,7 +34,42 @@ function loadNameToStateId(): Record<string, number> {
   return nameToStateId!;
 }
 
+// 1.16.4 block factory + data, used to resolve a schematic block's name AND
+// properties (facing/half/axis/shape…) to its full state id — so the preview and
+// the model see real, orientation-carrying blocks, not just each name's default.
+type PBlock = { name: string; getProperties?: () => Record<string, unknown> };
+let blockFactory: ReturnType<typeof prismarineBlock> | null = null;
+let mcData: ReturnType<typeof mcDataLoader> | null = null;
+function getBlockFactory() {
+  if (!blockFactory) blockFactory = prismarineBlock(VERSION);
+  return blockFactory;
+}
+function getMcData() {
+  if (!mcData) mcData = mcDataLoader(VERSION);
+  return mcData;
+}
+
 const isAir = (n?: string) => !n || n === "air" || n === "cave_air" || n === "void_air";
+
+/** Resolve a parsed schematic block → full 1.16.4 state id (0 = air). */
+function resolveStateId(block: PBlock | null): number {
+  const name = block?.name;
+  if (isAir(name)) return 0;
+  const bd = getMcData().blocksByName[name as string];
+  if (bd) {
+    try {
+      const props = typeof block!.getProperties === "function" ? block!.getProperties() : {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sid = (getBlockFactory() as any).fromProperties(bd.id, props, 0)?.stateId;
+      if (typeof sid === "number") return sid;
+    } catch {
+      /* fall through to defaults */
+    }
+    if (typeof bd.defaultState === "number") return bd.defaultState;
+  }
+  const n2s = loadNameToStateId();
+  return n2s[`minecraft:${name}`] ?? n2s[name as string] ?? 1;
+}
 
 export async function POST(req: NextRequest) {
   const t0 = performance.now();
@@ -77,8 +114,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Schematic dimensions out of range" }, { status: 422 });
   }
 
-  const n2s = loadNameToStateId();
-
   // uniform downscale → longest axis fills the 32-grid (preserves proportions), centred
   const maxD = Math.max(W, H, L);
   const s = GRID / maxD;
@@ -97,9 +132,10 @@ export async function POST(req: NextRequest) {
       const sy = Math.min(H - 1, Math.floor((ty * H) / nh));
       for (let tz = 0; tz < nl; tz++) {
         const sz = Math.min(L - 1, Math.floor((tz * L) / nl));
-        const name = schem.getBlock(new Vec3(start.x + sx, start.y + sy, start.z + sz))?.name;
-        if (isAir(name)) continue;
-        raw[idx(ox + tx, oy + ty, oz + tz)] = n2s[`minecraft:${name}`] ?? n2s[name as string] ?? 1;
+        const block = schem.getBlock(new Vec3(start.x + sx, start.y + sy, start.z + sz)) as PBlock | null;
+        const sid = resolveStateId(block);
+        if (sid === 0) continue;
+        raw[idx(ox + tx, oy + ty, oz + tz)] = sid;
         nonAir++;
       }
     }
