@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { buildVoxelMesh, fetchVoxelGrid, loadAtlas, loadAtlasTexture, type MeshResult } from "@/lib/blockAtlas";
+import { fetchVoxelGrid } from "@/lib/blockAtlas";
+import { buildGridMesh, type GridMesh } from "@/lib/cubaneRenderer";
 
 /**
- * Live, textured 3D preview of a build, meshed from its raw Minecraft block-state
- * grid (real block IDs from data.parquet) with the prebuilt texture atlas. The
- * camera is framed on the build's true bounding box, so a flat map stays flat and
- * a tall tower stays tall — never squished to fit the container.
+ * Live, textured 3D preview of a build, rendered by the real schematic-renderer
+ * engine (Cubane) from its raw Minecraft block-state grid + the vanilla resource
+ * pack. Every block — including small ones (levers, torches, buttons, rails,
+ * stairs, fences) — renders with its true model shape, position and per-face
+ * textures. The camera is framed on the build's true bounding box, so a flat map
+ * stays flat and a tall tower stays tall. Model only: no bounding box, no ground.
  */
 export function PrismarineViewer({
   id,
@@ -25,7 +28,7 @@ export function PrismarineViewer({
   className?: string;
   fallback?: ReactNode;
 }) {
-  const [data, setData] = useState<{ tex: THREE.Texture; mesh: MeshResult } | null>(null);
+  const [data, setData] = useState<GridMesh | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -34,11 +37,14 @@ export function PrismarineViewer({
     setFailed(false);
     (async () => {
       try {
-        const [atlas, tex] = await Promise.all([loadAtlas(), loadAtlasTexture()]);
         const g = grid ?? (id ? await fetchVoxelGrid(id) : null);
         if (!g) throw new Error("no voxel source");
-        if (!alive) return;
-        setData({ tex, mesh: buildVoxelMesh(g, atlas) });
+        const mesh = await buildGridMesh(g);
+        if (!alive) {
+          disposeGroupGeometries(mesh.group);
+          return;
+        }
+        setData(mesh);
       } catch {
         if (alive) setFailed(true);
       }
@@ -47,6 +53,15 @@ export function PrismarineViewer({
       alive = false;
     };
   }, [id, grid]);
+
+  // Dispose merged geometries when the rendered mesh changes/unmounts. Materials
+  // and the atlas texture are shared across builds (MaterialRegistry), so we never
+  // dispose those here.
+  useEffect(() => {
+    return () => {
+      if (data) disposeGroupGeometries(data.group);
+    };
+  }, [data]);
 
   if (failed) return <div className={className}>{fallback ?? null}</div>;
   if (!data) return <div className={`${className ?? ""} skeleton`} />;
@@ -58,47 +73,21 @@ export function PrismarineViewer({
         <ambientLight intensity={0.75} />
         <directionalLight position={[40, 70, 30]} intensity={1.25} />
         <directionalLight position={[-30, 25, -35]} intensity={0.35} color="#8b5cf6" />
-        <Build mesh={data.mesh} tex={data.tex} />
+        <Build mesh={data} />
       </Canvas>
     </div>
   );
 }
 
-function Build({ mesh, tex }: { mesh: MeshResult; tex: THREE.Texture }) {
+function disposeGroupGeometries(group: THREE.Group) {
+  group.traverse((o) => {
+    if (o instanceof THREE.Mesh) o.geometry?.dispose();
+  });
+}
+
+function Build({ mesh }: { mesh: GridMesh }) {
   const { camera, size } = useThree();
   const controls = useRef<React.ComponentRef<typeof OrbitControls>>(null);
-
-  const texturedMat = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        map: tex,
-        vertexColors: true,
-        roughness: 0.95,
-        metalness: 0,
-        alphaTest: 0.5,
-        // cutout planes (cross-plants, fences, rails…) are visible from both sides
-        side: THREE.DoubleSide,
-      }),
-    [tex],
-  );
-  const translucentMat = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        map: tex,
-        vertexColors: true,
-        roughness: 0.25,
-        metalness: 0,
-        transparent: true,
-        alphaTest: 0.05,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    [tex],
-  );
-  const flatMat = useMemo(
-    () => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }),
-    [],
-  );
 
   // Frame the camera on the build's bounding sphere (true proportions, no squish).
   useEffect(() => {
@@ -125,9 +114,7 @@ function Build({ mesh, tex }: { mesh: MeshResult; tex: THREE.Texture }) {
 
   return (
     <>
-      {mesh.textured && <mesh geometry={mesh.textured} material={texturedMat} />}
-      {mesh.flat && <mesh geometry={mesh.flat} material={flatMat} />}
-      {mesh.translucent && <mesh geometry={mesh.translucent} material={translucentMat} renderOrder={1} />}
+      <primitive object={mesh.group} />
       <OrbitControls
         ref={controls}
         enablePan={false}

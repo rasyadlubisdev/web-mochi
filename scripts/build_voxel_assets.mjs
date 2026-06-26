@@ -45,6 +45,7 @@ const OUT_GALLERY = path.join(ROOT, "public/data/gallery.json");
 const OUT_FEATURES = path.join(ROOT, "public/data/features.bin");
 const OUT_TEXTS = path.join(ROOT, "public/data/_texts.json");
 const OUT_MAPPING = path.join(ROOT, "public/data/block_mapping.json");
+const OUT_STATE2BLOCK = path.join(ROOT, "public/data/state2block.json");
 
 const FACES = ["up", "down", "north", "south", "east", "west"];
 const TRANSLUCENT = /glass|^water$|^ice$|frosted_ice|slime_block|honey_block|nether_portal|barrier|^lava$/;
@@ -413,6 +414,28 @@ async function main() {
   // mesher renders real geometry from these, not single-texture unit cubes.
   fs.writeFileSync(OUT_ATLAS_JSON, JSON.stringify({ version: VERSION, schema: 2, atlas: `/atlas/${VERSION}.png`, blocks }));
   fs.copyFileSync(path.join(PV_PUBLIC, "textures", `${VERSION}.png`), path.join(OUT_ATLAS_DIR, `${VERSION}.png`));
+
+  // state2block.json — stateId → "minecraft:name[prop=val,...]" for every state
+  // that appears in the dataset (+ every block's default state, for uploads). The
+  // client feeds these strings straight into the Cubane renderer, so it doesn't
+  // need prismarine-block / minecraft-data bundled in the browser.
+  //
+  // The dataset uses 1.16.4 block names but the vendored resource pack is newer,
+  // so the two blocks renamed since 1.16.4 are mapped to their current ids (the
+  // only names from this dataset missing from the pack's blockstates).
+  const RENAME = { grass: "short_grass", grass_path: "dirt_path" };
+  const state2block = {};
+  for (const id of usedStates) {
+    let b;
+    try { b = Block.fromStateId(id, 0); } catch { continue; }
+    if (!b || /(^|_)air$/.test(b.name)) continue;
+    const name = RENAME[b.name] ?? b.name;
+    const props = typeof b.getProperties === "function" ? b.getProperties() : b._properties || {};
+    const keys = Object.keys(props);
+    const suffix = keys.length ? `[${keys.map((k) => `${k}=${props[k]}`).join(",")}]` : "";
+    state2block[id] = `minecraft:${name}${suffix}`;
+  }
+  fs.writeFileSync(OUT_STATE2BLOCK, JSON.stringify(state2block));
 
   console.log(`features.bin: ${n}×${FEAT_DIM}  |  atlas states: ${resolved}/${usedStates.size}  |  gallery.json: ${(fs.statSync(OUT_GALLERY).size / 1024 / 1024).toFixed(1)} MB`);
   conn.close();

@@ -2,12 +2,13 @@
 //
 // The browse grid can show 200+ cards, so we can't mount a WebGL context per
 // card. Instead a single shared offscreen Three.js renderer paints each build
-// (using the exact same atlas + mesher as the detail PrismarineViewer) to a PNG
+// (using the exact same Cubane engine as the detail PrismarineViewer) to a PNG
 // data URL — queued one at a time, cached by id. The result is a thumbnail that
-// matches the detail view: real textures and true proportions (no squish).
+// matches the detail view: real block models, textures, and true proportions.
 
 import * as THREE from "three";
-import { buildVoxelMesh, fetchVoxelGrid, loadAtlas, loadAtlasTexture } from "./blockAtlas";
+import { fetchVoxelGrid } from "./blockAtlas";
+import { buildGridMesh } from "./cubaneRenderer";
 
 const W = 480;
 const H = 360; // 4:3, matches the card image area
@@ -16,10 +17,6 @@ interface RState {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  group: THREE.Group;
-  matTex: THREE.MeshStandardMaterial;
-  matTrans: THREE.MeshStandardMaterial;
-  matFlat: THREE.MeshStandardMaterial;
 }
 
 let state: RState | null = null;
@@ -27,9 +24,8 @@ const cache = new Map<string, string>();
 const inflight = new Map<string, Promise<string>>();
 let chain: Promise<unknown> = Promise.resolve();
 
-async function ensureState(): Promise<RState> {
+function ensureState(): RState {
   if (state) return state;
-  const tex = await loadAtlasTexture();
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
@@ -46,47 +42,18 @@ async function ensureState(): Promise<RState> {
   fill.position.set(-30, 25, -35);
   scene.add(fill);
 
-  const group = new THREE.Group();
-  scene.add(group);
   const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 2000);
 
-  state = {
-    renderer,
-    scene,
-    camera,
-    group,
-    matTex: new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.95, metalness: 0, alphaTest: 0.5, side: THREE.DoubleSide }),
-    matTrans: new THREE.MeshStandardMaterial({
-      map: tex,
-      vertexColors: true,
-      transparent: true,
-      alphaTest: 0.05,
-      depthWrite: false,
-      roughness: 0.25,
-      metalness: 0,
-      side: THREE.DoubleSide,
-    }),
-    matFlat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }),
-  };
+  state = { renderer, scene, camera };
   return state;
 }
 
 async function renderOne(id: string): Promise<string> {
-  const s = await ensureState();
-  const [grid, atlas] = await Promise.all([fetchVoxelGrid(id), loadAtlas()]);
-  const mesh = buildVoxelMesh(grid, atlas);
+  const grid = await fetchVoxelGrid(id);
+  const mesh = await buildGridMesh(grid);
+  const s = ensureState();
 
-  const added: THREE.Mesh[] = [];
-  const add = (geo: THREE.BufferGeometry | null, mat: THREE.Material, order = 0) => {
-    if (!geo) return;
-    const m = new THREE.Mesh(geo, mat);
-    m.renderOrder = order;
-    s.group.add(m);
-    added.push(m);
-  };
-  add(mesh.textured, s.matTex);
-  add(mesh.flat, s.matFlat);
-  add(mesh.translucent, s.matTrans, 1);
+  s.scene.add(mesh.group);
 
   // frame on the build's bounding sphere — true proportions, fit into the 4:3 view
   const radius = 0.5 * mesh.size.length() || 8;
@@ -103,10 +70,12 @@ async function renderOne(id: string): Promise<string> {
   s.renderer.render(s.scene, s.camera);
   const url = s.renderer.domElement.toDataURL("image/png");
 
-  for (const m of added) {
-    s.group.remove(m);
-    m.geometry.dispose();
-  }
+  // Remove + dispose this build's merged geometries (materials/atlas are shared).
+  s.scene.remove(mesh.group);
+  mesh.group.traverse((o) => {
+    if (o instanceof THREE.Mesh) o.geometry?.dispose();
+  });
+
   cache.set(id, url);
   return url;
 }

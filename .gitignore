@@ -15,3 +15,5 @@
 *.pth
 *.bin
 *.onnx
+# Vanilla resource pack for the Cubane renderer (large binary asset)
+/public/pack.zip
