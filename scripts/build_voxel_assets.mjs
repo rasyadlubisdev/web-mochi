@@ -151,52 +151,141 @@ function voxelFeatures(grid, dims) {
 }
 const FEAT_DIM = 256 + 1 + 3 + Y_BINS + AX_BINS + AX_BINS + 2;
 
-// ── atlas UV resolution (prismarine-block + prebuilt blockstates) ─────────────
-function pickVariant(entry, props) {
-  if (!entry || !entry.variants) return null;
-  const variants = entry.variants;
-  const keys = Object.keys(variants);
-  const take = (v) => {
-    const x = Array.isArray(v) ? v[0] : v;
-    return x && x.model ? x.model : x;
-  };
-  if (keys.length === 1) return take(variants[keys[0]]);
-  const want = props || {};
-  let fallback = null;
-  for (const key of keys) {
-    if (key === "") { fallback = fallback ?? variants[key]; continue; }
-    if (key.split(",").every((t) => { const [k, v] = t.split("="); return String(want[k]) === v; })) return take(variants[key]);
-  }
-  return take(fallback ?? variants[keys[0]]);
+// ── model resolution (prismarine-viewer prebuilt, FULLY-RESOLVED blockstates) ──
+//
+// prismarine-viewer ships `blocksStates/<version>.json` with each blockstate
+// already resolved down to render-ready geometry: per variant/multipart, a model
+// with ALL `elements` (from/to boxes, element rotations) and, per element face,
+// the in-tile `uv` sub-rect (0–16), the atlas tile rect (`texture.{u,v,su,sv}` in
+// 0–1 UV space), `tintindex`, `cullface` and face `rotation`. We carry that whole
+// structure to the client so the runtime mesher draws REAL geometry (stairs are
+// L-shaped, slabs are half-height, crosses are X-shaped, logs face the right way)
+// with correct per-face textures — instead of a single-texture unit cube.
+
+// Pick the model(s) that apply to a given set of block properties.
+//   • variants → the single best-matching variant (exact props, else "", else first)
+//   • multipart → every part whose `when` condition matches (fences, walls, panes…)
+const takeModel = (v) => {
+  const x = Array.isArray(v) ? v[0] : v; // weighted lists → first entry
+  return x && x.model ? x.model : x;
+};
+function matchesWhen(when, props) {
+  if (!when) return true;
+  if (when.OR) return when.OR.some((c) => matchesWhen(c, props));
+  return Object.entries(when).every(([k, val]) => {
+    const have = String(props[k]);
+    return String(val).split("|").includes(have);
+  });
 }
+function resolveModels(entry, props) {
+  if (!entry) return [];
+  if (entry.variants) {
+    const variants = entry.variants;
+    const keys = Object.keys(variants);
+    if (keys.length === 1) return [takeModel(variants[keys[0]])];
+    // best variant: most property tokens matching `props`, none conflicting
+    let best = null, bestScore = -1, empty = null;
+    for (const key of keys) {
+      if (key === "") { empty = variants[key]; continue; }
+      const toks = key.split(",").map((t) => t.split("="));
+      let score = 0, ok = true;
+      for (const [k, val] of toks) {
+        if (String(props[k]) === val) score++;
+        else { ok = false; break; }
+      }
+      if (ok && score > bestScore) { bestScore = score; best = variants[key]; }
+    }
+    const chosen = best ?? empty ?? variants[keys[0]];
+    return chosen ? [takeModel(chosen)] : [];
+  }
+  if (entry.multipart) {
+    const models = [];
+    for (const part of entry.multipart) {
+      if (matchesWhen(part.when, props)) models.push(takeModel(part.apply));
+    }
+    return models;
+  }
+  return [];
+}
+
+// Translate one resolved element face into our compact carry format, or null.
+function packFace(f) {
+  const tex = f && f.texture;
+  if (!tex || typeof tex.u !== "number") return null;
+  const out = {
+    // atlas tile rect in 0–1 UV space (top-left u,v + size su,sv)
+    box: [tex.u, tex.v, tex.su, tex.sv],
+  };
+  // in-tile sub-rect in 0–16 Minecraft coords; default = whole tile [0,0,16,16]
+  if (Array.isArray(f.uv)) out.uv = f.uv;
+  if (f.rotation) out.rot = f.rotation;     // 0/90/180/270 texture rotation
+  if (f.tintindex !== undefined) out.tint = 1;
+  if (f.cullface) out.cull = f.cullface;     // face direction that culls this face
+  return out;
+}
+
+// Translate one resolved model element (box + rotation + 6 faces) → compact form.
+function packElement(el) {
+  const faces = {};
+  let any = false;
+  for (const face of FACES) {
+    const pf = packFace(el.faces && el.faces[face]);
+    if (pf) { faces[face] = pf; any = true; }
+  }
+  if (!any) return null;
+  const out = { from: el.from, to: el.to, faces };
+  if (el.rotation) out.rot = el.rotation; // {origin, axis, angle, rescale}
+  if (el.shade === false) out.shade = 0;
+  return out;
+}
+
 function resolveState(id) {
   let block;
   try { block = Block.fromStateId(id, 0); } catch { return null; }
   if (!block || /(^|_)air$/.test(block.name)) return null;
   const entry = blocksStates[block.name];
   const props = typeof block.getProperties === "function" ? block.getProperties() : block._properties || {};
-  const model = pickVariant(entry, props);
   const mcBlock = mcData.blocksByName[block.name];
   const translucent = TRANSLUCENT.test(block.name);
+  // A block is a solid, face-culling cube only when its model is a single full
+  // 0..16 element (handled at mesh time); flag opacity for neighbour culling.
   const opaque = !translucent && !!mcBlock && mcBlock.boundingBox === "block" && !mcBlock.transparent;
-  const out = { faces: {}, tint: {}, opaque };
-  if (translucent) out.translucent = true;
-  const el = model && model.elements && model.elements[0];
-  for (const face of FACES) {
-    const f = el && el.faces && el.faces[face];
-    const tex = f && f.texture;
-    if (tex && typeof tex.u === "number") {
-      out.faces[face] = [tex.u, tex.v, tex.su, tex.sv];
-      if (f.tintindex !== undefined) out.tint[face] = true;
+
+  const models = resolveModels(entry, props);
+  const elements = [];
+  for (const model of models) {
+    for (const el of model?.elements ?? []) {
+      const pe = packElement(el);
+      if (pe) elements.push(pe);
     }
   }
-  if (Object.keys(out.faces).length < 6) {
-    const t = model && model.textures;
-    const fb = t && (t.all || t.side || t.particle);
-    const rect = fb && typeof fb.u === "number" ? [fb.u, fb.v, fb.su ?? 1 / 32, fb.sv ?? 1 / 32] : out.faces.up;
-    if (rect) for (const face of FACES) if (!out.faces[face]) out.faces[face] = rect;
+
+  // Liquids (water/lava) ship an empty-element model but a valid `particle`
+  // texture — synthesise a full translucent cube from it so they render as blue
+  // water / orange lava instead of falling back to a random hashed colour.
+  if (!elements.length) {
+    const firstModel = models[0];
+    const particle = firstModel?.textures?.particle;
+    if (particle && typeof particle.u === "number" && /water|lava/.test(block.name)) {
+      const box = [particle.u, particle.v, particle.su, particle.sv];
+      const faces = {};
+      for (const face of FACES) faces[face] = { box, uv: [0, 0, 16, 16], cull: face };
+      return { elements: [{ from: [0, 0, 0], to: [16, 16, 16], faces }], opaque: false, cube: true, translucent: true };
+    }
+    return null;
   }
-  return Object.keys(out.faces).length ? out : null;
+
+  // A "full cube" is one element spanning the whole block on every axis — used by
+  // the mesher to cull hidden faces against opaque neighbours.
+  const fullCube =
+    elements.length === 1 &&
+    elements[0].from[0] === 0 && elements[0].from[1] === 0 && elements[0].from[2] === 0 &&
+    elements[0].to[0] === 16 && elements[0].to[1] === 16 && elements[0].to[2] === 16 &&
+    !elements[0].rot;
+
+  const out = { elements, opaque, cube: fullCube };
+  if (translucent) out.translucent = true;
+  return out;
 }
 
 // ── duckdb helpers ────────────────────────────────────────────────────────────
@@ -320,7 +409,9 @@ async function main() {
     const r = resolveState(id);
     if (r) { blocks[id] = r; resolved++; }
   }
-  fs.writeFileSync(OUT_ATLAS_JSON, JSON.stringify({ version: VERSION, atlas: `/atlas/${VERSION}.png`, tile: 1 / 32, blocks }));
+  // schema v2: per-state element-based models (see resolveState) — the runtime
+  // mesher renders real geometry from these, not single-texture unit cubes.
+  fs.writeFileSync(OUT_ATLAS_JSON, JSON.stringify({ version: VERSION, schema: 2, atlas: `/atlas/${VERSION}.png`, blocks }));
   fs.copyFileSync(path.join(PV_PUBLIC, "textures", `${VERSION}.png`), path.join(OUT_ATLAS_DIR, `${VERSION}.png`));
 
   console.log(`features.bin: ${n}×${FEAT_DIM}  |  atlas states: ${resolved}/${usedStates.size}  |  gallery.json: ${(fs.statSync(OUT_GALLERY).size / 1024 / 1024).toFixed(1)} MB`);

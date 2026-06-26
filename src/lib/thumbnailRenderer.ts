@@ -55,7 +55,7 @@ async function ensureState(): Promise<RState> {
     scene,
     camera,
     group,
-    matTex: new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.95, metalness: 0, alphaTest: 0.5 }),
+    matTex: new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.95, metalness: 0, alphaTest: 0.5, side: THREE.DoubleSide }),
     matTrans: new THREE.MeshStandardMaterial({
       map: tex,
       vertexColors: true,

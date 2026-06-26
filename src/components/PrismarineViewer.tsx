@@ -76,6 +76,8 @@ function Build({ mesh, tex }: { mesh: MeshResult; tex: THREE.Texture }) {
         roughness: 0.95,
         metalness: 0,
         alphaTest: 0.5,
+        // cutout planes (cross-plants, fences, rails…) are visible from both sides
+        side: THREE.DoubleSide,
       }),
     [tex],
   );

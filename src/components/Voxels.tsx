@@ -11,7 +11,12 @@ const MAT = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.0 });
 const dummy = new THREE.Object3D();
 const color = new THREE.Color();
 
-/** Instanced render of all non-air voxels in a 32^3 grid, centred at the origin. */
+/**
+ * Instanced **flat-colour** render of all non-air voxels in a 32^3 grid, centred
+ * at the origin. This is the lightweight editor path (compact block ids → hashed
+ * palette colours, no textures), used by VoxelBuilder. For the textured, real-block
+ * preview use {@link VoxelViewer}/PrismarineViewer instead.
+ */
 export function Voxels({ grid }: { grid: Uint8Array }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const voxels = useMemo(() => nonAirVoxels(grid), [grid]);

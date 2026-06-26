@@ -1,39 +1,27 @@
 "use client";
 
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Environment } from "@react-three/drei";
-import { GRID } from "@/lib/types";
-import { Voxels } from "./Voxels";
+import type { ReactNode } from "react";
+import { PrismarineViewer } from "./PrismarineViewer";
 
-/** Orbitable 3D preview of a single voxel build. */
-export function VoxelViewer({ grid, className }: { grid: Uint8Array; className?: string }) {
-  return (
-    <div className={className}>
-      <Canvas
-        shadows
-        dpr={[1, 2]}
-        camera={{ position: [GRID * 0.9, GRID * 0.75, GRID * 0.9], fov: 42 }}
-        gl={{ antialias: true }}
-      >
-        <color attach="background" args={["#0d0d16"]} />
-        <ambientLight intensity={0.6} />
-        <directionalLight
-          position={[20, 40, 25]}
-          intensity={1.4}
-          castShadow
-          shadow-mapSize={[1024, 1024]}
-        />
-        <directionalLight position={[-25, 15, -20]} intensity={0.4} color="#8b5cf6" />
-        <Voxels grid={grid} />
-        <Environment preset="city" />
-        <OrbitControls
-          autoRotate
-          autoRotateSpeed={0.8}
-          enablePan={false}
-          minDistance={GRID * 0.6}
-          maxDistance={GRID * 2.2}
-        />
-      </Canvas>
-    </div>
-  );
+/**
+ * Orbitable, **textured** 3D preview of a single build. Thin wrapper over
+ * {@link PrismarineViewer} (the shared atlas + element mesher), so every preview —
+ * gallery detail, uploads, and this viewer — share one rendering path and look
+ * identical. Pass either a gallery `id` (its raw state-id grid is fetched) or a
+ * raw 32^3 `Uint16Array` of Minecraft block-state ids.
+ *
+ * (For the flat-colour, compact-id editor preview see {@link Voxels}/VoxelBuilder.)
+ */
+export function VoxelViewer({
+  id,
+  grid,
+  className,
+  fallback,
+}: {
+  id?: string;
+  grid?: Uint16Array;
+  className?: string;
+  fallback?: ReactNode;
+}) {
+  return <PrismarineViewer id={id} grid={grid} className={className} fallback={fallback} />;
 }
