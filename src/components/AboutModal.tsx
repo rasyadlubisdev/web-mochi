@@ -15,9 +15,9 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         <p className="mt-4 text-sm text-white/70 leading-relaxed">
           This is a demo of <strong className="text-white">cross-modal retrieval</strong> between text, images and
           3D Minecraft voxel schematics — the final project for the <em>Retrieval Information</em> course. It runs the
-          actual <strong className="text-white">trained tri-modal model</strong>: a CLIP ViT-B/16
-          <span className="text-[var(--color-text)]"> text</span> + <span className="text-[var(--color-text)]">image</span> encoder
-          and a <span className="text-[var(--color-voxel)]">PointBERT</span> voxel encoder projected into one shared 256-d space,
+          actual <strong className="text-white">trained tri-modal model</strong>: a frozen
+          <span className="text-[var(--color-text)]"> TinyCLIP</span> text + image encoder and a
+          <span className="text-[var(--color-voxel)]"> 3D-CNN</span> voxel encoder projected into one shared 256-d space,
           trained with symmetric InfoNCE. Every build's voxel embedding is precomputed; your query is embedded live and ranked
           by cosine similarity.
         </p>
@@ -31,12 +31,12 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
           <Section
             title="🖼️ Image → Build"
             color="var(--color-text)"
-            body="Upload a photo or render; the model's CLIP image encoder embeds it and ranks builds by similarity to their voxel embeddings (image→voxel — the model's strongest direction, recall@1 ≈ 0.32)."
+            body="Upload a photo or render; the model's TinyCLIP image encoder embeds it and ranks builds by similarity to their voxel embeddings (image→voxel)."
           />
           <Section
             title="🧱 Schematic → Build"
             color="var(--color-voxel)"
-            body="Upload a .schem/.schematic; it's voxelised and embedded by the PointBERT voxel encoder, then matched against the gallery's voxel embeddings (voxel→voxel)."
+            body="Upload a .schem/.schematic; it's voxelised and embedded by the 3D-CNN voxel encoder, then matched against the gallery's voxel embeddings (voxel→voxel)."
           />
         </div>
 

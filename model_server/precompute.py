@@ -1,10 +1,10 @@
-"""Precompute gallery artifacts for the model-backed search.
+"""Precompute gallery artifacts for the retrained tri-modal model (ir_best_model.pt).
 
-Streams the training parquet (data_with_voxel_names_multiview_image.parquet),
-builds the exact name2id vocab, loads the trained TriModalEncoder, and writes:
+Streams public/data/data.parquet (numeric voxel_data + metadata), uses the
+checkpoint's block_mapping + 3D-CNN voxel encoder to embed every build, and writes:
   public/data/gallery.json            metadata index (client + server)
   public/data/raw/<id>.bin            gzip(uint16 LE 32^3) real state-ids (3D preview)
-  public/data/name2id.json            block-name -> vocab index (Next voxel-query mapping)
+  public/data/block_mapping.json      numeric block-id -> compact index (reference)
   model_server/gallery_voxel_emb.npy  float32 [N,256] L2-normalised voxel embeddings
 
 Run inside the mcmodel conda env, from the web project root:
@@ -15,35 +15,32 @@ import os
 import sys
 import json
 import gzip
-from collections import Counter
 
 import numpy as np
 import pyarrow.parquet as pq
 import torch
 
+import re
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from trimodal import (  # noqa: E402
-    CFG, GRID, TriModalEncoder, build_name_vocab, remap_voxel_names, clean_text,
-)
-from transformers import CLIPProcessor  # noqa: E402
+from trimodal2 import GRID, load_model, remap_voxel  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-PARQUET = "/Users/rasyadlubis/ProjectRasyad/college/semester 6/retrieval-information/minecraft-schematics-dataset/data_with_voxel_names_multiview_image.parquet"
-CKPT = os.path.join(ROOT, "src/app/model/schematics_best_model.pth")
+PARQUET = os.path.join(ROOT, "public/data/data.parquet")
+CKPT = os.path.join(ROOT, "src/app/model/ir_best_model.pt")
 OUT_DATA = os.path.join(ROOT, "public/data")
 OUT_RAW = os.path.join(OUT_DATA, "raw")
 OUT_EMB = os.path.join(os.path.dirname(__file__), "gallery_voxel_emb.npy")
 
 VOXELS = GRID * GRID * GRID
 BATCH = 48
-META_COLS = ["title", "subtitle", "description", "tags", "user", "date",
-             "diamondCount", "views", "downloads", "url"]
 
-device = torch.device("mps" if torch.backends.mps.is_available()
-                      else "cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {device}")
 
-name2stateid = json.load(open(os.path.join(OUT_DATA, "name2stateid.json")))
+def clean_text(s):
+    if not isinstance(s, str):
+        return ""
+    s = re.sub(r"<[^>]+>", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def parse_tags(raw):
@@ -60,90 +57,59 @@ def parse_tags(raw):
     return []
 
 
-def year_of(date):
-    return int(date[:4]) if isinstance(date, str) and date[:4].isdigit() else None
+def year_of(d):
+    return int(d[:4]) if isinstance(d, str) and d[:4].isdigit() else None
 
 
-def grid_state_ids(names):
-    out = np.zeros(VOXELS, dtype=np.uint16)
-    for i, n in enumerate(names):
-        if isinstance(n, str) and "air" not in n:
-            out[i] = name2stateid.get(n, 1)
-    return out
-
-
-def dims_fill(state_ids):
-    vol = (state_ids != 0).reshape(GRID, GRID, GRID)
+def dims_fill(vd):
+    vol = (np.asarray(vd, dtype=np.int64) != 0).reshape(GRID, GRID, GRID)
     coords = np.argwhere(vol)
     if coords.size == 0:
         return [0, 0, 0], 0.0
-    mins = coords.min(0); maxs = coords.max(0) + 1
-    dims = [int(maxs[0] - mins[0]), int(maxs[1] - mins[1]), int(maxs[2] - mins[2])]
-    return dims, round(float(vol.sum()) / VOXELS, 4)
+    mins, maxs = coords.min(0), coords.max(0) + 1
+    return [int(maxs[0] - mins[0]), int(maxs[1] - mins[1]), int(maxs[2] - mins[2])], round(float(vol.sum()) / VOXELS, 4)
+
+
+META = ["title", "subtitle", "description", "tags", "user", "date", "diamondCount", "views", "downloads", "url"]
 
 
 def main():
-    pf = pq.ParquetFile(PARQUET)
-    total = pf.metadata.num_rows
-    print(f"Parquet rows: {total}")
-
-    # ── Pass 1: build name2id vocab (stream voxel_name_data) ──
-    print("Pass 1/2: building name vocab ...")
-    counter = Counter()
-    for batch in pf.iter_batches(batch_size=256, columns=["voxel_name_data"]):
-        for vnd in batch.column("voxel_name_data").to_pylist():
-            if vnd:
-                counter.update(n for n in vnd if isinstance(n, str) and n != "minecraft:air")
-    top = [b for b, _ in counter.most_common(CFG["max_block_types"] - 2)]
-    name2id = {"minecraft:air": 0, "<rare>": 1}
-    for i, n in enumerate(top, start=2):
-        name2id[n] = i
-    print(f"  vocab size: {len(name2id)}")
-
-    # ── Build model + load checkpoint ──
-    print("Loading checkpoint + model ...")
-    ckpt = torch.load(CKPT, map_location="cpu", weights_only=False)
-    state = ckpt["model_state"] if isinstance(ckpt, dict) and "model_state" in ckpt else ckpt
-    ckpt_vocab = state["voxel_encoder.block_embedding.weight"].shape[0]
-    print(f"  checkpoint vocab: {ckpt_vocab}  (built: {len(name2id)})")
-    assert ckpt_vocab == len(name2id), "vocab mismatch — name2id must match training"
-
-    processor = CLIPProcessor.from_pretrained(CFG["tinyclip_hf_model"])
-    model = TriModalEncoder(CFG, len(name2id), processor)
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    bad = [k for k in missing if "proj" in k or "voxel_encoder" in k]
-    print(f"  loaded. missing={len(missing)} unexpected={len(unexpected)} | trained-keys missing: {len(bad)}")
-    assert not bad, f"trained weights failed to load: {bad[:5]}"
-    model.to(device).eval()
+    device = torch.device("mps" if torch.backends.mps.is_available()
+                          else "cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+    print("Loading model + checkpoint ...")
+    model, block_mapping, cfg = load_model(CKPT, device)
+    crop_bbox = cfg["data"].get("crop_bbox", True)
+    print(f"  block_mapping size: {len(block_mapping)}  crop_bbox={crop_bbox}")
 
     os.makedirs(OUT_RAW, exist_ok=True)
-    # clear stale raw bins from the previous gallery
     for f in os.listdir(OUT_RAW):
         if f.endswith(".bin"):
             os.remove(os.path.join(OUT_RAW, f))
 
-    # ── Pass 2: per build → voxel embedding + raw bin + metadata ──
-    print("Pass 2/2: encoding voxels + writing assets ...")
+    pf = pq.ParquetFile(PARQUET)
+    total = pf.metadata.num_rows
+    print(f"Parquet rows: {total}. Encoding voxels ...")
+
     items, embs = [], []
     n = 0
-    cols = ["voxel_name_data"] + META_COLS
-    for batch in pf.iter_batches(batch_size=BATCH, columns=cols):
+    for batch in pf.iter_batches(batch_size=BATCH, columns=["voxel_data"] + META):
         rows = batch.to_pylist()
-        vox_tensors, idxs = [], []
+        keep, vox = [], []
         for row in rows:
-            vnd = row.get("voxel_name_data")
-            if not vnd or len(vnd) != VOXELS:
+            vd = row.get("voxel_data")
+            if vd is None or len(vd) != VOXELS:
                 continue
-            idxs.append(row)
-            vox_tensors.append(remap_voxel_names(vnd, name2id, crop_bbox=CFG["crop_bbox"]))
-        if not vox_tensors:
+            keep.append(row)
+            vox.append(remap_voxel(vd, block_mapping, crop_bbox=crop_bbox))
+        if not vox:
             continue
-        with torch.no_grad():
-            v = model.encode_voxel(torch.stack(vox_tensors).to(device)).cpu().numpy().astype("<f4")
+        v = model.encode_voxel(torch.stack(vox).to(device)).cpu().numpy().astype("<f4")
 
-        for row, emb in zip(idxs, v):
-            sid = grid_state_ids(row["voxel_name_data"])
-            dims, fill = dims_fill(sid)
+        for row, emb in zip(keep, v):
+            vd = np.asarray(row["voxel_data"], dtype=np.int64)
+            sid = np.clip(vd, 0, 65535).astype("<u2")
+            dims, fill = dims_fill(vd)
             bid = f"b{n:05d}"
             with open(os.path.join(OUT_RAW, f"{bid}.bin"), "wb") as fh:
                 fh.write(gzip.compress(sid.tobytes(), 9))
@@ -170,15 +136,14 @@ def main():
 
     emb_mat = np.stack(embs).astype("<f4")
     np.save(OUT_EMB, emb_mat)
-    json.dump(name2id, open(os.path.join(OUT_DATA, "name2id.json"), "w"))
+    json.dump(block_mapping, open(os.path.join(OUT_DATA, "block_mapping.json"), "w"))
     json.dump({
-        "meta": {"grid": GRID, "count": n, "embedDim": CFG["embed_dim"],
+        "meta": {"grid": GRID, "count": n, "embedDim": int(emb_mat.shape[1]),
                  "source": "Planet Minecraft (minecraft-schematics-mvm)",
-                 "note": "Searchable gallery; ranking by the trained tri-modal model (voxel embeddings)."},
+                 "note": "Ranking by the retrained tri-modal model (TinyCLIP text/image + 3D-CNN voxel)."},
         "items": items,
     }, open(os.path.join(OUT_DATA, "gallery.json"), "w"), separators=(",", ":"))
-
-    print(f"Done. builds={n}  emb={emb_mat.shape}  -> gallery.json, name2id.json, {os.path.basename(OUT_EMB)}, raw/*.bin")
+    print(f"Done. builds={n}  emb={emb_mat.shape}  -> gallery.json, block_mapping.json, gallery_voxel_emb.npy, raw/*.bin")
 
 
 if __name__ == "__main__":
