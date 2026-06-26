@@ -9,3 +9,9 @@
 .transformers-cache/
 /.claude
 /.transformers-cache
+
+# Large model files
+*.pt
+*.pth
+*.bin
+*.onnx
