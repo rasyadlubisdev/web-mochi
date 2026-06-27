@@ -114,16 +114,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Schematic dimensions out of range" }, { status: 422 });
   }
 
-  // uniform downscale → longest axis fills the 32-grid (preserves proportions), centred
+  // Voxelise to match the gallery's render grids EXACTLY, so an uploaded build
+  // previews identically to a card pop-up (both feed the same renderer). The
+  // dataset grids are corner-anchored at the origin at 1 block = 1 voxel (true
+  // block resolution); they are never upscaled. So here we only ever DOWNSCALE
+  // (when a build exceeds the 32-grid) and otherwise copy 1:1 — never upscale.
+  // Upscaling was the bug: it blew each block into a ~2×2×2 cluster, which made
+  // stairs / slabs / logs render as chunky, mis-shaped lumps unlike the card.
   const maxD = Math.max(W, H, L);
-  const s = GRID / maxD;
+  const s = Math.min(1, GRID / maxD); // ≤ 1: shrink big builds, never enlarge small ones
   const nw = Math.max(1, Math.min(GRID, Math.round(W * s)));
   const nh = Math.max(1, Math.min(GRID, Math.round(H * s)));
   const nl = Math.max(1, Math.min(GRID, Math.round(L * s)));
-  const ox = (GRID - nw) >> 1, oy = (GRID - nh) >> 1, oz = (GRID - nl) >> 1;
 
-  // Build a 32^3 grid of REAL block-state ids; the sidecar remaps it into the
-  // model's compact block space (block_mapping) before encoding.
+  // Build a 32^3 grid of REAL block-state ids, corner-anchored at the origin (the
+  // dataset convention; the renderer frames on the bounding box and the sidecar
+  // crops to it, so the anchor is invisible downstream). The sidecar remaps the
+  // ids into the model's compact block space (block_mapping) before encoding.
   const raw = new Uint16Array(VOXELS);
   let nonAir = 0;
   for (let tx = 0; tx < nw; tx++) {
@@ -135,7 +142,7 @@ export async function POST(req: NextRequest) {
         const block = schem.getBlock(new Vec3(start.x + sx, start.y + sy, start.z + sz)) as PBlock | null;
         const sid = resolveStateId(block);
         if (sid === 0) continue;
-        raw[idx(ox + tx, oy + ty, oz + tz)] = sid;
+        raw[idx(tx, ty, tz)] = sid; // corner-anchored at origin (matches dataset grids)
         nonAir++;
       }
     }
