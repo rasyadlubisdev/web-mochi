@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { Search, Image, Box, Package, TriangleAlert, X, ArrowRight } from "lucide-react";
 import type { GalleryFile, GalleryItemRaw } from "@/lib/types";
 import { decodeRawVoxels } from "@/lib/blockAtlas";
 import { BuildCard } from "@/components/BuildCard";
 import { BuildDetail } from "@/components/BuildDetail";
 import { AboutModal } from "@/components/AboutModal";
+import { MochiLogo } from "@/components/MochiLogo";
 
 const PrismarineViewer = dynamic(() => import("@/components/PrismarineViewer").then((m) => m.PrismarineViewer), {
   ssr: false,
@@ -41,19 +43,16 @@ export default function Home() {
   const [selected, setSelected] = useState<{ item: GalleryItemRaw; score?: number } | null>(null);
   const [about, setAbout] = useState(false);
   const [modelStatus, setModelStatus] = useState<ModelStatus>("idle");
-  const [visibleCount, setVisibleCount] = useState(60); // browse pagination
+  const [visibleCount, setVisibleCount] = useState(60);
 
-  // upload state (search by schematic file)
   const [uploadedGrid, setUploadedGrid] = useState<Uint16Array | null>(null);
   const [uploadName, setUploadName] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // image-search state
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageName, setImageName] = useState<string | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
 
-  // --- load gallery + warm the text model ---
   useEffect(() => {
     fetch("/data/gallery.json")
       .then((r) => r.json())
@@ -75,7 +74,6 @@ export default function Home() {
     return m;
   }, [items]);
 
-  // --- text search ---
   const runText = useCallback(async (q: string) => {
     const query = q.trim();
     if (!query) return;
@@ -101,7 +99,6 @@ export default function Home() {
     }
   }, []);
 
-  // --- schematic upload search ---
   const runSchematic = useCallback(async (file: File) => {
     setMode("build");
     setLoading(true);
@@ -113,11 +110,11 @@ export default function Home() {
       form.append("file", file);
       const res = await fetch("/api/schematic", { method: "POST", body: form });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.hint ? `${data.error} — ${data.hint}` : data.error || "Upload failed");
+      if (!res.ok) throw new Error(data.hint ? `${data.error}: ${data.hint}` : data.error || "Upload failed");
       setUploadedGrid(await decodeRawVoxels(data.voxels));
       setResults(data.results);
       setInfo(
-        `${data.results.length} builds · ${file.name} (${data.stats.dims.join("×")}, ${data.stats.blocks} blocks) · ${data.tookMs}ms`,
+        `${data.results.length} builds · ${file.name} (${data.stats.dims.join("x")}, ${data.stats.blocks} blocks) · ${data.tookMs}ms`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -128,7 +125,6 @@ export default function Home() {
     }
   }, []);
 
-  // --- image upload search ---
   const runImage = useCallback(async (file: File) => {
     setMode("image");
     setLoading(true);
@@ -143,7 +139,7 @@ export default function Home() {
       form.append("file", file);
       const res = await fetch("/api/search/image", { method: "POST", body: form });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.hint ? `${data.error} — ${data.hint}` : data.error || "Search failed");
+      if (!res.ok) throw new Error(data.hint ? `${data.error}: ${data.hint}` : data.error || "Search failed");
       setResults(data.results);
       setInfo(`${data.results.length} builds · ${file.name} · ${data.tookMs}ms`);
     } catch (e) {
@@ -182,7 +178,6 @@ export default function Home() {
         .map((r, i) => ({ item: byId.get(r.id)!, score: r.score, rank: i + 1 }))
         .filter((x) => x.item);
     }
-    // browse: highest-engagement first
     return [...items]
       .sort((a, b) => b.diamonds - a.diamonds)
       .map((item) => ({ item }));
@@ -194,10 +189,10 @@ export default function Home() {
       <header className="sticky top-0 z-30 border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-[var(--color-voxel)] to-[var(--color-accent)] grid place-items-center text-lg">🧊</div>
+            <MochiLogo size={36} />
             <div>
-              <h1 className="text-sm font-semibold text-white leading-tight">MC-Retrieval</h1>
-              <p className="text-[11px] text-white/45 leading-tight">Cross-modal Minecraft schematic search</p>
+              <h1 className="text-sm font-semibold text-white leading-tight">MOCHI</h1>
+              <p className="text-[11px] text-white/45 leading-tight">Minecraft Object Comprehension &amp; Hybrid Indexing</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -212,9 +207,9 @@ export default function Home() {
       <main className="mx-auto max-w-7xl px-4 py-6">
         {/* mode tabs */}
         <div className="flex items-center gap-2 mb-5">
-          <TabButton active={mode === "text"} onClick={() => setMode("text")} icon="🔍" label="Search by Text" />
-          <TabButton active={mode === "image"} onClick={() => setMode("image")} icon="🖼️" label="Search by Image" />
-          <TabButton active={mode === "build"} onClick={() => setMode("build")} icon="🧱" label="Search by Building" />
+          <TabButton active={mode === "text"} onClick={() => setMode("text")} icon={<Search size={14} />} label="Search by Text" />
+          <TabButton active={mode === "image"} onClick={() => setMode("image")} icon={<Image size={14} />} label="Search by Image" />
+          <TabButton active={mode === "build"} onClick={() => setMode("build")} icon={<Box size={14} />} label="Search by Building" />
         </div>
 
         {/* query area */}
@@ -230,7 +225,7 @@ export default function Home() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Describe a build — e.g. 'a tall medieval castle with stone towers'"
+                placeholder="Describe a build, e.g. 'a tall medieval castle with stone towers'"
                 className="flex-1 rounded-xl bg-[var(--color-panel-2)] border border-[var(--color-border)] px-4 py-3 text-sm text-white placeholder:text-white/35 outline-none focus:border-[var(--color-voxel)]/60"
               />
               <button
@@ -238,7 +233,7 @@ export default function Home() {
                 disabled={loading || !query.trim()}
                 className="px-5 py-3 rounded-xl bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40 transition-colors"
               >
-                {loading ? "Searching…" : "Search"}
+                {loading ? "Searching..." : "Search"}
               </button>
             </form>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -275,11 +270,13 @@ export default function Home() {
                   className="h-full w-full grid place-items-center cursor-pointer text-center px-6 hover:bg-white/[0.02] transition-colors"
                 >
                   <div>
-                    <div className="text-4xl mb-3">🖼️</div>
-                    <div className="text-sm text-white/80 font-medium">
-                      {loading ? "Searching…" : "Drop an image here, or click to browse"}
+                    <div className="flex justify-center mb-3 text-white/30">
+                      <Image size={40} />
                     </div>
-                    <div className="text-[11px] text-white/40 mt-1">jpg · png — a photo or render of a build</div>
+                    <div className="text-sm text-white/80 font-medium">
+                      {loading ? "Searching..." : "Drop an image here, or click to browse"}
+                    </div>
+                    <div className="text-[11px] text-white/40 mt-1">jpg · png · a photo or render of a build</div>
                   </div>
                 </label>
               )}
@@ -293,7 +290,7 @@ export default function Home() {
               <div>
                 <div className="text-xs text-white/50 mb-2">Search by image</div>
                 <p className="text-[12px] text-white/55 leading-relaxed">
-                  Upload a photo or render of a build — the model embeds it with its image encoder and finds the most similar schematics.
+                  Upload a photo or render of a build; the model embeds it with its image encoder and finds the most similar schematics.
                 </p>
               </div>
               <input
@@ -309,15 +306,19 @@ export default function Home() {
               <button
                 onClick={() => imageInput.current?.click()}
                 disabled={loading}
-                className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40"
+                className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40 flex items-center justify-center gap-2"
               >
-                {loading ? "Searching…" : imageUrl ? "Try another image →" : "Choose image →"}
+                {loading ? "Searching..." : imageUrl ? (
+                  <><span>Try another image</span><ArrowRight size={14} /></>
+                ) : (
+                  <><span>Choose image</span><ArrowRight size={14} /></>
+                )}
               </button>
               {imageName && (
                 <div className="text-[11px] text-white/55 mono break-all rounded-lg bg-[var(--color-panel-2)] px-3 py-2">{imageName}</div>
               )}
               <div className="mt-auto text-[11px] text-white/35 leading-relaxed">
-                Ranked via the trained model&apos;s image→voxel retrieval.
+                Ranked via the trained model&apos;s image to voxel retrieval.
               </div>
             </div>
           </section>
@@ -338,9 +339,11 @@ export default function Home() {
                   className="h-full w-full grid place-items-center cursor-pointer text-center px-6 hover:bg-white/[0.02] transition-colors"
                 >
                   <div>
-                    <div className="text-4xl mb-3">📦</div>
+                    <div className="flex justify-center mb-3 text-white/30">
+                      <Package size={40} />
+                    </div>
                     <div className="text-sm text-white/80 font-medium">
-                      {loading ? "Parsing schematic…" : "Drop a schematic here, or click to browse"}
+                      {loading ? "Parsing schematic..." : "Drop a schematic here, or click to browse"}
                     </div>
                     <div className="text-[11px] text-white/40 mt-1">.schem (WorldEdit) · .schematic (MCEdit)</div>
                   </div>
@@ -358,7 +361,7 @@ export default function Home() {
               <div>
                 <div className="text-xs text-white/50 mb-2">Search by schematic</div>
                 <p className="text-[12px] text-white/55 leading-relaxed">
-                  Upload a Minecraft schematic — we voxelise it, show a 3D preview, and rank the most structurally similar community builds.
+                  Upload a Minecraft schematic; we voxelise it, show a 3D preview, and rank the most structurally similar community builds.
                 </p>
               </div>
 
@@ -375,9 +378,13 @@ export default function Home() {
               <button
                 onClick={() => fileInput.current?.click()}
                 disabled={loading}
-                className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40"
+                className="py-2.5 rounded-lg bg-[var(--color-voxel)] text-black text-sm font-semibold hover:bg-emerald-400 disabled:opacity-40 flex items-center justify-center gap-2"
               >
-                {loading ? "Parsing…" : uploadedGrid ? "Upload another →" : "Choose file →"}
+                {loading ? "Parsing..." : uploadedGrid ? (
+                  <><span>Upload another</span><ArrowRight size={14} /></>
+                ) : (
+                  <><span>Choose file</span><ArrowRight size={14} /></>
+                )}
               </button>
 
               {uploadName && (
@@ -387,7 +394,7 @@ export default function Home() {
               )}
 
               <div className="mt-auto text-[11px] text-white/35 leading-relaxed">
-                Supported: WorldEdit <span className="mono">.schem</span> and legacy MCEdit <span className="mono">.schematic</span>. Large builds are scaled to a 32³ grid with proportions preserved.
+                Supported: WorldEdit <span className="mono">.schem</span> and legacy MCEdit <span className="mono">.schematic</span>. Large builds are scaled to a 32x32x32 grid with proportions preserved.
               </div>
             </div>
           </section>
@@ -397,27 +404,29 @@ export default function Home() {
         <div className="mt-5 flex items-center justify-between min-h-[24px]">
           <div className="text-sm">
             {error ? (
-              <span className="text-red-400">⚠ {error}</span>
+              <span className="text-red-400 flex items-center gap-1.5">
+                <TriangleAlert size={14} /> {error}
+              </span>
             ) : results ? (
               <span className="text-white/70">
                 {mode === "text"
-                  ? "Ranked by the model — text → voxel"
+                  ? "Ranked by the model: text to voxel"
                   : mode === "image"
-                    ? "Ranked by the model — image → voxel"
-                    : "Ranked by the model — voxel → voxel"}
+                    ? "Ranked by the model: image to voxel"
+                    : "Ranked by the model: voxel to voxel"}
                 {info && <span className="text-white/40 mono ml-2">· {info}</span>}
               </span>
             ) : items ? (
               <span className="text-white/50">
-                Browsing {meta?.count ?? items.length} community builds — search above to rank by similarity
+                Browsing {meta?.count ?? items.length} community builds; search above to rank by similarity
               </span>
             ) : (
-              <span className="text-white/40">Loading gallery…</span>
+              <span className="text-white/40">Loading gallery...</span>
             )}
           </div>
           {results && (
-            <button onClick={clearSearch} className="text-xs text-white/50 hover:text-white">
-              ✕ Clear results
+            <button onClick={clearSearch} className="text-xs text-white/50 hover:text-white flex items-center gap-1">
+              <X size={12} /> Clear results
             </button>
           )}
         </div>
@@ -451,7 +460,7 @@ export default function Home() {
       </main>
 
       <footer className="mx-auto max-w-7xl px-4 py-8 text-center text-xs text-white/30">
-        MC-Retrieval demo · CLIP-style text↔voxel retrieval · data from Planet Minecraft
+        MOCHI · cross-modal text and voxel retrieval · data from Planet Minecraft
       </footer>
 
       {selected && <BuildDetail item={selected.item} score={selected.score} onClose={() => setSelected(null)} />}
@@ -460,7 +469,7 @@ export default function Home() {
   );
 }
 
-function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: string; label: string }) {
+function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
   return (
     <button
       onClick={onClick}
@@ -470,7 +479,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
           : "border-transparent text-white/50 hover:text-white/80"
       }`}
     >
-      <span>{icon}</span>
+      {icon}
       {label}
     </button>
   );
@@ -479,7 +488,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
 function ModelBadge({ status }: { status: ModelStatus }) {
   const map = {
     idle: { c: "#64748b", t: "model idle" },
-    loading: { c: "#f59e0b", t: "loading model…" },
+    loading: { c: "#f59e0b", t: "loading model..." },
     ready: { c: "#10b981", t: "model ready" },
     error: { c: "#ef4444", t: "model offline" },
   }[status];

@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import dynamic from "next/dynamic";
+import { X, Gem, Download, Eye, ExternalLink } from "lucide-react";
 import type { GalleryItemRaw } from "@/lib/types";
 import { compactNum, scorePct } from "@/lib/format";
 
@@ -42,7 +43,7 @@ export function BuildDetail({
             fallback={<div className="grid h-full w-full place-items-center text-sm text-white/40">preview unavailable</div>}
           />
           <span className="absolute bottom-3 left-3 text-[11px] text-white/40 mono">
-            drag to orbit · textured · {item.dims.join("×")} blocks
+            drag to orbit · textured · {item.dims.join("x")} blocks
           </span>
         </div>
 
@@ -52,13 +53,17 @@ export function BuildDetail({
             <div>
               <span className="text-xs text-[var(--color-voxel)]">{item.category}</span>
               <h2 className="text-xl font-semibold text-white mt-0.5">{item.title}</h2>
-              {item.user && <p className="text-sm text-white/50 mt-1">by {item.user}{item.year ? ` · ${item.year}` : ""}</p>}
+              {item.user && (
+                <p className="text-sm text-white/50 mt-1">
+                  by {item.user}{item.year ? ` · ${item.year}` : ""}
+                </p>
+              )}
             </div>
             <button
               onClick={onClose}
               className="shrink-0 h-8 w-8 grid place-items-center rounded-lg border border-[var(--color-border)] text-white/60 hover:text-white hover:border-white/30"
             >
-              ✕
+              <X size={14} />
             </button>
           </div>
 
@@ -84,14 +89,14 @@ export function BuildDetail({
           )}
 
           <div className="mt-5 grid grid-cols-3 gap-2 text-center">
-            {[
-              ["💎 Diamonds", item.diamonds],
-              ["⬇ Downloads", item.downloads],
-              ["👁 Views", item.views],
-            ].map(([label, val]) => (
-              <div key={label as string} className="rounded-lg bg-[var(--color-panel-2)] py-2">
+            {([
+              { icon: <Gem size={13} />, label: "Diamonds", val: item.diamonds },
+              { icon: <Download size={13} />, label: "Downloads", val: item.downloads },
+              { icon: <Eye size={13} />, label: "Views", val: item.views },
+            ] as const).map(({ icon, label, val }) => (
+              <div key={label} className="rounded-lg bg-[var(--color-panel-2)] py-2">
                 <div className="text-sm font-semibold mono text-white">{compactNum(val as number)}</div>
-                <div className="text-[10px] text-white/45">{label}</div>
+                <div className="text-[10px] text-white/45 flex items-center justify-center gap-1">{icon}{label}</div>
               </div>
             ))}
           </div>
@@ -103,7 +108,8 @@ export function BuildDetail({
               rel="noreferrer"
               className="mt-5 inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-[var(--color-voxel)] text-black font-medium hover:bg-emerald-400 transition-colors"
             >
-              View on Planet Minecraft ↗
+              View on Planet Minecraft
+              <ExternalLink size={13} />
             </a>
           )}
         </div>

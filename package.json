@@ -20,6 +20,7 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "hyparquet": "^1.26.1",
+    "lucide-react": "^1.21.0",
     "jszip": "^3.10.1",
     "next": "^15.1.6",
     "prismarine-schematic": "^1.3.0",

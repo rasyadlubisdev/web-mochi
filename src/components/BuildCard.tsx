@@ -1,5 +1,6 @@
 "use client";
 
+import { Gem, Download, Eye } from "lucide-react";
 import type { GalleryItemRaw } from "@/lib/types";
 import { compactNum, scoreFraction, scorePct } from "@/lib/format";
 import { VoxelThumb } from "./VoxelThumb";
@@ -73,9 +74,15 @@ export function BuildCard({
           {item.title}
         </h3>
         <div className="mt-2 flex items-center gap-3 text-[11px] text-white/45 mono">
-          <span title="diamonds">💎 {compactNum(item.diamonds)}</span>
-          <span title="downloads">⬇ {compactNum(item.downloads)}</span>
-          <span title="views">👁 {compactNum(item.views)}</span>
+          <span title="diamonds" className="flex items-center gap-1">
+            <Gem size={11} /> {compactNum(item.diamonds)}
+          </span>
+          <span title="downloads" className="flex items-center gap-1">
+            <Download size={11} /> {compactNum(item.downloads)}
+          </span>
+          <span title="views" className="flex items-center gap-1">
+            <Eye size={11} /> {compactNum(item.views)}
+          </span>
         </div>
       </div>
     </button>
